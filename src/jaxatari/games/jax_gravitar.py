@@ -1,17 +1,21 @@
 import jax
 import jax.numpy as jnp
 import pygame
+from functools import partial
 import numpy as np
 from jaxatari.core import JaxEnvironment
 import jax.random as jrandom
-from typing import Tuple, Generic, TypeVar, Dict, NamedTuple
+from typing import Tuple, NamedTuple
 import math
+
 """
     Group member of the Gravitar: Xusong Yin, Elizaveta Kuznetsova, Li Dai
 """
 
-
-#action constant
+# ========== Constants ==========
+MAX_BULLETS = 64
+MAX_ENEMIES = 16
+# 18 discrete spaceship action constants
 NOOP = 0
 FIRE = 1
 UP = 2
@@ -31,7 +35,7 @@ UPLEFTFIRE = 15
 DOWNRIGHTFIRE = 16
 DOWNLEFTFIRE = 17
 
-#HUD settings
+# HUD settings
 HUD_HEIGHT = 30
 MAX_LIVES = 6
 HUD_PADDING = 5
@@ -39,11 +43,580 @@ HUD_SHIP_WIDTH = 10
 HUD_SHIP_HEIGHT = 12
 HUD_SHIP_SPACING = 12
 
-
-
 # Pygame window dimensions
 WINDOW_WIDTH = 160 * 3
 WINDOW_HEIGHT = 210 * 3
+
+
+# ========== Bullet State ==========
+# 定义子弹的状态
+class Bullets(NamedTuple):
+    x: jnp.ndarray  # shape(MAX_BULLETS, )
+    y: jnp.ndarray
+    vx: jnp.ndarray
+    vy: jnp.ndarray
+    alive: jnp.ndarray  # bool array
+
+
+# ========== Enemies States ==========
+# 初始化Enemy
+class Enemies(NamedTuple):
+    x: jnp.ndarray  # shape (MAX_ENEMIES,)
+    y: jnp.ndarray
+    w: jnp.ndarray
+    h: jnp.ndarray
+    vx: jnp.ndarray
+
+
+# ========== Ship State ==========
+class ShipState(NamedTuple):
+    x: jnp.ndarray
+    y: jnp.ndarray
+    vx: jnp.ndarray
+    vy: jnp.ndarray
+    angle: jnp.ndarray
+
+
+# ========== Env State ==========
+class EnvState(NamedTuple):
+    mode: int
+    state: ShipState
+    bullets: Bullets
+    cooldown: jnp.ndarray
+    enemies: Enemies
+    enemy_bullets: Bullets
+    fire_cooldown: jnp.ndarray
+    key: jnp.ndarray
+    key_alt: jnp.ndarray
+    score: jnp.ndarray
+    done: bool
+    lives: jnp.ndarray
+
+
+# ========== Init Function ==========
+# 初始化空子弹
+def create_empty_bullets_fixed(size: int) -> Bullets:
+    return Bullets(
+        x=jnp.zeros((size,), dtype=jnp.float32),
+        y=jnp.zeros((size,), dtype=jnp.float32),
+        vx=jnp.zeros((size,), dtype=jnp.float32),
+        vy=jnp.zeros((size,), dtype=jnp.float32),
+        alive=jnp.zeros((size,), dtype=bool)
+    )
+
+
+def create_empty_bullets_64():
+    return create_empty_bullets_fixed(64)
+
+
+def create_empty_bullets_16():
+    return create_empty_bullets_fixed(16)
+
+
+@jax.jit
+def create_empty_enemies():
+    return Enemies(
+        x=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
+        y=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
+        w=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
+        h=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
+        vx=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32)
+    )
+
+
+@jax.jit
+def create_env_state(rng: jnp.ndarray) -> EnvState:
+    return EnvState(
+        mode=1,
+        state=ShipState(
+            x=jnp.array(100.0),
+            y=jnp.array(100.0),
+            vx=jnp.array(0.0),
+            vy=jnp.array(0.0),
+            angle=jnp.array(0.0),
+        ),
+        bullets=create_empty_bullets_64(),
+        cooldown=jnp.array(0, dtype=jnp.int32),
+        enemies=create_empty_enemies(),
+        enemy_bullets=create_empty_bullets_16(),
+        fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
+        key=rng,
+        key_alt=rng,
+        score=jnp.array(0.0),
+        done=False,
+        lives=jnp.array(6, dtype=jnp.int32)
+    )
+
+
+# ========== Update Bullets ==========
+@jax.jit
+def update_bullets(bullets: Bullets) -> Bullets:
+    new_x = bullets.x + bullets.vx
+    new_y = bullets.y + bullets.vy
+
+    valid_x = (new_x >= 0) & (new_x <= WINDOW_WIDTH)
+    valid_y = (new_y >= HUD_HEIGHT) & (new_y <= WINDOW_HEIGHT)
+    valid = valid_x & valid_y & bullets.alive
+
+    return Bullets(
+        x=new_x,
+        y=new_y,
+        vx=bullets.vx,
+        vy=bullets.vy,
+        alive=valid
+    )
+
+
+# ========== Merge Bullets ==========
+@jax.jit
+def merge_bullets(b1: Bullets, b2: Bullets, max_len: int = 16) -> Bullets:
+    x = jnp.concatenate([b1.x, b2.x], axis=0)
+    y = jnp.concatenate([b1.y, b2.y], axis=0)
+    vx = jnp.concatenate([b1.vx, b2.vx], axis=0)
+    vy = jnp.concatenate([b1.vy, b2.vy], axis=0)
+    alive = jnp.concatenate([b1.alive, b2.alive], axis=0)
+
+    # 排序：优先把 alive == True 的排前面
+    sort_key = alive.astype(jnp.int32)
+    indices = jnp.argsort(-sort_key)  # True 在前
+    x = x[indices][:max_len]
+    y = y[indices][:max_len]
+    vx = vx[indices][:max_len]
+    vy = vy[indices][:max_len]
+    alive = alive[indices][:max_len]
+
+    return Bullets(x=x, y=y, vx=vx, vy=vy, alive=alive)
+
+
+# ========== Fire Bullet ==========
+# 发射子弹
+@jax.jit
+def fire_bullet(bullets: Bullets, ship_x, ship_y, ship_angle, bullet_speed):
+    def add_bullet(_):
+        idx = jnp.argmax(bullets.alive == False)
+        new_vx = jnp.cos(ship_angle) * bullet_speed
+        new_vy = jnp.sin(ship_angle) * bullet_speed
+
+        return Bullets(
+            x=bullets.x.at[idx].set(ship_x),
+            y=bullets.y.at[idx].set(ship_y),
+            vx=bullets.vx.at[idx].set(new_vx),
+            vy=bullets.vy.at[idx].set(new_vy),
+            alive=bullets.alive.at[idx].set(True)
+        )
+
+    def skip_bullet(_):
+        return bullets
+
+    can_fire = jnp.any(bullets.alive == False)
+    return jax.lax.cond(can_fire, add_bullet, skip_bullet, operand=None)
+
+
+# ========== Ship Collision Utilities ==========
+# 飞船碰撞情况
+@jax.jit
+def check_ship_crash(state: ShipState, enemies: Enemies, hitbox_size: float) -> bool:
+    sx1 = state.x - hitbox_size
+    sx2 = state.x + hitbox_size
+    sy1 = state.y - hitbox_size
+    sy2 = state.y + hitbox_size
+
+    ex1 = enemies.x - enemies.w / 2
+    ex2 = enemies.x + enemies.w / 2
+    ey1 = enemies.y - enemies.h / 2
+    ey2 = enemies.y + enemies.h / 2
+
+    overlap_x = (sx1 <= ex2) & (sx2 >= ex1)
+    overlap_y = (sy1 <= ey2) & (sy2 >= ey1)
+
+    return jnp.any(overlap_x & overlap_y)
+
+
+@jax.jit
+def check_ship_hit(state: ShipState, bullets: Bullets, hitbox_size: float) -> bool:
+    sx1 = state.x - hitbox_size
+    sx2 = state.x + hitbox_size
+    sy1 = state.y - hitbox_size
+    sy2 = state.y + hitbox_size
+
+    within_x = (bullets.x >= sx1) & (bullets.x <= sx2)
+    within_y = (bullets.y >= sy1) & (bullets.y <= sy2)
+
+    return jnp.any(within_x & within_y & bullets.alive)
+
+
+@jax.jit
+def check_enemy_hit(bullets: Bullets, enemies: Enemies) -> Tuple[Bullets, Enemies]:
+    padding = 2.0
+    ex1 = enemies.x - enemies.w / 2 - padding
+    ex2 = enemies.x + enemies.w / 2 + padding
+    ey1 = enemies.y - enemies.h / 2 - padding
+    ey2 = enemies.y + enemies.h / 2 + padding
+
+    bx = bullets.x[:, None]
+    by = bullets.y[:, None]
+
+    cond_x = (bx >= ex1) & (bx <= ex2)
+    cond_y = (by >= ey1) & (by <= ey2)
+    hit_matrix = cond_x & cond_y & bullets.alive[:, None]
+
+    bullet_hit = jnp.any(hit_matrix, axis=1)
+    enemy_hit = jnp.any(hit_matrix, axis=0)
+
+    new_bullets = Bullets(
+        x=bullets.x,
+        y=bullets.y,
+        vx=bullets.vx,
+        vy=bullets.vy,
+        alive=bullets.alive & (~bullet_hit)
+    )
+
+    new_enemies = Enemies(
+        x=enemies.x,
+        y=enemies.y,
+        w=jnp.where(enemy_hit, 0.0, enemies.w),
+        h=jnp.where(enemy_hit, 0.0, enemies.h),
+        vx=enemies.vx
+    )
+    print("enemy_hit:", enemy_hit)
+    print("enemies.w before:", enemies.w)
+    print("enemies.w after:", new_enemies.w)
+    return new_bullets, new_enemies
+
+
+# ========== Ship Step ==========
+# 飞船移动不用dict
+@jax.jit
+def ship_step(state: ShipState,
+              action: int,
+              window_size: tuple[int, int],
+              hud_height: int) -> ShipState:
+    rotation_speed = 0.2
+    thrust_power = 0.4
+    gravity = 0.08
+
+    rotate_right_actions = jnp.array([3, 6, 8, 11, 14, 16])
+    rotate_left_actions = jnp.array([4, 7, 9, 12, 15, 17])
+    thrust_actions = jnp.array([2, 6, 7, 10, 14, 15])
+    down_thrust_actions = jnp.array([5, 8, 9, 13, 16, 17])
+
+    right = jnp.isin(action, rotate_right_actions)
+    left = jnp.isin(action, rotate_left_actions)
+    thrust = jnp.isin(action, thrust_actions)
+    down_thrust = jnp.isin(action, down_thrust_actions)
+
+    angle = jnp.where(right, state.angle + rotation_speed, state.angle)
+    angle = jnp.where(left, angle - rotation_speed, angle)
+
+    vx = jnp.where(thrust, state.vx + jnp.cos(angle) * thrust_power, state.vx)
+    vy = jnp.where(thrust, state.vy + jnp.sin(angle) * thrust_power, state.vy)
+    vx = jnp.where(down_thrust, vx - jnp.cos(angle) * thrust_power, vx)
+    vy = jnp.where(down_thrust, vy - jnp.sin(angle) * thrust_power, vy)
+
+    vy += gravity
+
+    x = state.x + vx
+    y = state.y + vy
+
+    window_width, window_height = window_size
+    x = jnp.clip(x, 0, window_width - 5)
+    y = jnp.clip(y, hud_height, window_height - 5)
+
+    return ShipState(x=x, y=y, vx=vx, vy=vy, angle=angle)
+
+
+# ========== Enemy Step ==========
+# Enemy的移动
+@jax.jit
+def enemy_step(enemies: Enemies, window_width: int) -> Enemies:
+    x = enemies.x + enemies.vx
+    left_hit = x <= 0
+    right_hit = (x + enemies.w) >= window_width
+    hit_edge = left_hit | right_hit
+    vx = jnp.where(hit_edge, -enemies.vx, enemies.vx)
+    return Enemies(x=x, y=enemies.y, w=enemies.w, h=enemies.h, vx=vx)
+
+
+# ========== Enemy Fire ==========
+@jax.jit
+def enemy_fire(enemies: Enemies,
+               ship_x: float,
+               ship_y: float,
+               enemy_bullet_speed: float,
+               fire_cooldown: jnp.ndarray,  # shape should match len(enemies.x)
+               fire_interval: int,
+               key: jax.random.PRNGKey
+               ) -> tuple[Bullets, jnp.ndarray, jax.random.PRNGKey]:
+    ex_center = enemies.x + enemies.w / 2
+    ey_center = enemies.y + enemies.h / 2
+
+    dx = ship_x - ex_center  # shape=(N,)
+    dy = ship_y - ey_center  # shape=(N,)
+    dist = jnp.sqrt(dx ** 2 + dy ** 2)
+    dist = jnp.where(dist < 1e-3, 1.0, dist)  # 避免除以过小的数
+
+    vx = dx / dist * enemy_bullet_speed
+    vy = dy / dist * enemy_bullet_speed
+
+    # 判断敌人是否还活着（例如用宽度是否为 0）
+    alive_mask = enemies.w > 0.0  # 或 enemies.h > 0.0
+    should_fire = (fire_cooldown == 0) & alive_mask
+
+    fire_cooldown = fire_cooldown - 1
+    fire_cooldown = jnp.where(fire_cooldown < 0, 0, fire_cooldown)
+    fire_cooldown = jnp.where(should_fire, fire_interval, fire_cooldown)
+
+    x_out = jnp.where(should_fire, ex_center, -1.0)
+    y_out = jnp.where(should_fire, ey_center, -1.0)
+    vx_out = jnp.where(should_fire, vx, 0.0)
+    vy_out = jnp.where(should_fire, vy, 0.0)
+
+    bullets_out = Bullets(
+        x=x_out,
+        y=y_out,
+        vx=vx_out,
+        vy=vy_out,
+        alive=should_fire
+    )
+
+    return bullets_out, fire_cooldown, key
+
+
+# ========== Collision Detection ==========
+@jax.jit
+def check_collision(bullets: Bullets, enemies: Enemies):
+    def bullet_hits_enemy(i, carry):  # carry是累计结果，shape是(MAX_BULLETS,)的bool数组
+        x = bullets.x[i]  # x,y 当前子弹坐标
+        y = bullets.y[i]
+        alive = bullets.alive[i]  # 子弹是否还存活
+
+        def check_each_enemy(j, hit):
+            within_x = (x > enemies.x[j]) & (x < enemies.x[j] + enemies.w[j])  # 矩形包围盒，Enemy的包围盒：(x,x+w), (y, y+h)
+            within_y = (y > enemies.y[j]) & (y < enemies.y[j] + enemies.h[j])
+            return hit | (within_x & within_y)
+
+        hit_any = jax.lax.fori_loop(0, MAX_ENEMIES, check_each_enemy, False)
+        return carry.at[i].set(hit_any & alive)
+
+    hits = jnp.zeros((MAX_BULLETS,), dtype=bool)
+    hits = jax.lax.fori_loop(0, MAX_BULLETS, bullet_hits_enemy, hits)
+    return hits
+
+
+# ========== Step Core ==========
+@jax.jit
+def step_core(env_state: EnvState, action: int):
+    def step_map(env_state):
+        obs, new_state, reward, done, info, reset, level = step_core_map(
+            env_state.state,
+            action,
+            (WINDOW_WIDTH, WINDOW_HEIGHT),
+            HUD_HEIGHT
+        )
+        info = {
+            "crash": jnp.array(False),
+            "hit_by_bullet": jnp.array(False)
+        }
+        return (
+            obs,
+            env_state._replace(
+                state=new_state,
+                score=env_state.score + reward,  # 以后进入一个星球加分
+                done=done,
+                enemy_bullets=create_empty_bullets_16(),
+            ),
+            reward,
+            done,
+            info,
+            reset,
+            level
+        )
+
+    def step_level(env_state):
+        obs, new_state, bullets, cooldown, enemies, enemy_bullets, fire_cooldown, key, reward, score_delta, done, reset, level = step_core_level(
+            env_state.state,
+            action,
+            env_state.bullets,
+            env_state.cooldown,
+            env_state.enemies,
+            env_state.enemy_bullets,
+            env_state.fire_cooldown,
+            env_state.key,
+            (WINDOW_WIDTH, WINDOW_HEIGHT),
+            HUD_HEIGHT,
+            cooldown_max=5,
+            bullet_speed=5.0,
+            enemy_bullet_speed=5.0,
+            fire_interval=60
+        )
+        return (
+            obs,
+            env_state._replace(
+                state=new_state,
+                bullets=bullets,
+                cooldown=cooldown,
+                enemies=enemies,
+                enemy_bullets=enemy_bullets,
+                fire_cooldown=fire_cooldown,
+                key=key,
+                score=env_state.score + score_delta,
+                done=done
+            ),
+            reward,
+            done,
+            {
+                "crash": jnp.array(False),
+                "hit_by_bullet": jnp.array(False)
+            },
+            reset,  # reset
+            level  # level
+        )
+
+    return jax.lax.cond(
+        env_state.mode == 0,
+        lambda _: step_map(env_state),
+        lambda _: step_level(env_state),
+        operand=None
+    )
+
+
+# ========== Step Core Map ==========
+@jax.jit
+def step_core_map(state: ShipState,
+                  action: int,
+                  window_size: Tuple[int, int],
+                  hud_height: int
+                  ) -> Tuple[jnp.ndarray, ShipState, float, bool, dict, bool, int]:
+    new_state = ship_step(state, action, window_size, hud_height)
+
+    obs = jnp.array([
+        new_state.x,
+        new_state.y,
+        new_state.vx,
+        new_state.vy,
+        new_state.angle
+    ])
+
+    reward = 0.0
+    done = False
+    info = {}
+
+    # 星球数据（不可用 Python 的 self.planets，需转成静态数组）
+    planet_x = jnp.array([60.0, 120.0, 200.0])
+    planet_y = jnp.array([120.0, 200.0, 80.0])
+    planet_r = jnp.array([15.0, 15.0, 15.0])
+    level_ids = jnp.array([0, 1, 2])
+
+    dx = planet_x - new_state.x
+    dy = planet_y - new_state.y
+    dists = jnp.sqrt(dx ** 2 + dy ** 2)
+    within_planet = dists < planet_r
+
+    reset = jnp.any(within_planet)
+    level_idx = jnp.argmax(within_planet)
+    level = jnp.where(reset, level_ids[level_idx], -1)
+
+    return obs, new_state, reward, done, info, reset, level
+
+
+# ========== Step Core Level Skeleton ==========
+@jax.jit
+def step_core_level(state: ShipState,
+                    action: int,
+                    bullets: Bullets,
+                    cooldown: int,
+                    enemies: Enemies,
+                    enemy_bullets: Bullets,
+                    fire_cooldown: jnp.ndarray,
+                    key: jax.random.PRNGKey,
+                    window_size: Tuple[int, int],
+                    hud_height: int,
+                    cooldown_max: int,
+                    bullet_speed: float,
+                    enemy_bullet_speed: float,
+                    fire_interval: int) -> Tuple[
+    jnp.ndarray, ShipState, Bullets, int, Enemies, Bullets, jnp.ndarray, jax.random.PRNGKey, float, float, bool, bool, int]:
+    # 飞船移动
+    state = ship_step(state, action, window_size, hud_height)
+
+    # 处理射击行为
+    fire_actions = jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])
+    is_firing = jnp.isin(action, fire_actions)
+    bullets = jax.lax.cond(
+        is_firing & (cooldown == 0),
+        lambda _: fire_bullet(bullets, state.x, state.y, state.angle, bullet_speed),
+        lambda _: bullets,
+        operand=None
+    )
+    bullets = update_bullets(bullets)
+    cooldown = jnp.where(is_firing & (cooldown == 0), cooldown_max, jnp.maximum(cooldown - 1, 0))
+
+    # 敌人移动
+    enemies = enemy_step(enemies, window_width=window_size[0])
+
+    new_enemy_bullets, fire_cooldown, key = enemy_fire(
+        enemies, state.x, state.y, enemy_bullet_speed, fire_cooldown, fire_interval, key
+    )
+
+    # ========== 子弹合并 + 更新（静态长度控制） ==========
+
+    def pad_bullets(b: Bullets, target_len=16):
+        def pad_array(arr, pad_val=0.0):
+            cur_len = arr.shape[0]
+            pad_len = max(target_len - cur_len, 0)
+            return jnp.pad(arr[:target_len], (0, pad_len), constant_values=pad_val)
+
+        return Bullets(
+            x=pad_array(b.x),
+            y=pad_array(b.y),
+            vx=pad_array(b.vx),
+            vy=pad_array(b.vy),
+            alive=pad_array(b.alive, pad_val=False)
+        )
+
+    def truncate_bullets(b: Bullets, max_len=16):
+        return Bullets(
+            x=b.x[:max_len],
+            y=b.y[:max_len],
+            vx=b.vx[:max_len],
+            vy=b.vy[:max_len],
+            alive=b.alive[:max_len]
+        )
+
+    new_enemy_bullets = pad_bullets(new_enemy_bullets, target_len=16)
+    enemy_bullets = pad_bullets(enemy_bullets, target_len=16)
+    enemy_bullets = merge_bullets(enemy_bullets, new_enemy_bullets)
+    enemy_bullets = update_bullets(enemy_bullets)
+    enemy_bullets = truncate_bullets(enemy_bullets, max_len=16)
+    # 子弹与敌人碰撞检测
+    # 保存前一帧敌人宽度（用来判断是否新死亡）
+    w_prev = enemies.w
+
+    # 命中判定
+    bullets, enemies = check_enemy_hit(bullets, enemies)
+
+    # 新增死亡敌人（从 w > 0 到 w == 0）
+    new_killed = (w_prev > 0.0) & (enemies.w == 0.0)
+    num_new_killed = jnp.sum(new_killed)
+    score_delta = num_new_killed.astype(jnp.float32) * 10.0
+    # 敌人或子弹命中飞船
+    crashed = check_ship_crash(state, enemies, hitbox_size=10.0)
+    hit_by_bullet = check_ship_hit(state, enemy_bullets, hitbox_size=10.0)
+    dead = crashed | hit_by_bullet
+
+    reward = jnp.where(dead, -10.0, -1.0)
+
+    all_dead = jnp.all(enemies.w == 0.0)
+    done = dead
+
+    # 地图跳转（不是死亡，是胜利）
+    reset = all_dead & (~dead)  # 胜利进入地图模式（不能同时死亡和胜利）
+    level = jnp.where(reset, -1, -1)  # 回地图时设为 -1
+
+    obs = jnp.array([state.x, state.y, state.vx, state.vy, state.angle])
+    print("enemy_bullets.alive:", enemy_bullets.alive)
+    return obs, state, bullets, cooldown, enemies, enemy_bullets, fire_cooldown, key, reward, score_delta, done, reset, level
+
 
 def get_action_from_key():
     keys = pygame.key.get_pressed()
@@ -54,7 +627,7 @@ def get_action_from_key():
     fire = keys[pygame.K_SPACE]
     down = keys[pygame.K_DOWN]
 
-    #Map action combinations    映射动作组合  
+    # Map action combinations    映射动作组合
     if fire:
         return 1
     elif thrust:
@@ -89,415 +662,76 @@ def get_action_from_key():
         return 16  # DOWNRIGHTFIRE
     elif down and rotate_left and fire:
         return 17  # DOWNLEFTFIRE
-    
-    #default return to action 0     默认返回action 0   
+
+    # default return to action 0     默认返回action 0
     return 0
 
-def add_bullet(bullets: dict, new_bullet: dict) -> dict:
-    #Convert the new bullet to jnp.array and concatenate    单个新子弹转为 jnp.array 并拼接
-    new_x  = jnp.array([new_bullet["x"]])
-    new_y  = jnp.array([new_bullet["y"]])
-    new_vx = jnp.array([new_bullet["vx"]])
-    new_vy = jnp.array([new_bullet["vy"]])
-
-    return {
-        "x": jnp.concatenate([bullets["x"], new_x]),
-        "y": jnp.concatenate([bullets["y"], new_y]),
-        "vx": jnp.concatenate([bullets["vx"], new_vx]),
-        "vy": jnp.concatenate([bullets["vy"], new_vy])
-    }
-
-@jax.jit
-def update_bullets(bullets: dict) -> dict:
-    #Update bullet positions   更新子弹位置
-    x = bullets["x"] + bullets["vx"]
-    y = bullets["y"] + bullets["vy"]
-    #Keep valid bullets   保留有效子弹
-    valid = (y >= HUD_HEIGHT) & (y <= WINDOW_HEIGHT) & (x >= 0) & (x <= WINDOW_WIDTH)
-
-    #Set invalid bullet positions to -1 (off-screen)   将无效子弹位置设置为 -1，不可见区
-    x = jnp.where(valid, x, -1.0)
-    y = jnp.where(valid, y, -1.0)
-    vx = jnp.where(valid, bullets["vx"], 0.0)
-    vy = jnp.where(valid, bullets["vy"], 0.0)
-
-    return {
-        "x": x,
-        "y": y,
-        "vx": vx,
-        "vy": vy
-    }
-
-@jax.jit
-def ship_step(state, action, window_size, hud_height) -> dict:
-    #basic parameters   基本参数
-    rotation_speed = 0.2
-    thrust_power = 0.4
-    gravity = 0.08
-
-    rotate_right_actions = jnp.array([3, 6, 8, 11, 14, 16])
-    rotate_left_actions  = jnp.array([4, 7, 9, 12, 15, 17])
-    thrust_actions       = jnp.array([2, 6, 7, 10, 14, 15])
-    down_thrust_actions  = jnp.array([5, 8, 9, 13, 16, 17])
-
-    right       = jnp.isin(action, rotate_right_actions)
-    left        = jnp.isin(action, rotate_left_actions)
-    thrust      = jnp.isin(action, thrust_actions)
-    down_thrust = jnp.isin(action, down_thrust_actions)
-
-    angle = jnp.where(right, state["angle"] + rotation_speed, state["angle"])
-    angle = jnp.where(left,  angle - rotation_speed, angle)
-
-    vx = jnp.where(thrust,      state["vx"] + jnp.cos(angle) * thrust_power, state["vx"])
-    vy = jnp.where(thrust,      state["vy"] + jnp.sin(angle) * thrust_power, state["vy"])
-    vx = jnp.where(down_thrust, vx - jnp.cos(angle) * thrust_power, vx)
-    vy = jnp.where(down_thrust, vy - jnp.sin(angle) * thrust_power, vy)
-
-    vy += gravity
-
-    x = state["x"] + vx
-    y = state["y"] + vy
-
-    window_width, window_height = window_size
-    x = jnp.clip(x, 0, window_width - 5)
-    y = jnp.clip(y, hud_height, window_height - 5)
-
-    return {
-        "x": x,
-        "y": y,
-        "vx": vx,
-        "vy": vy,
-        "angle": angle
-    }
-
-@jax.jit
-def enemy_step(enemies: dict, window_width: int) -> dict:
-    x = enemies["x"] + enemies["vx"]
-    
-    #Reverse direction at the boundaries   到边界就反向
-    left_hit = x <= 0
-    right_hit = (x + enemies["w"]) >= window_width
-    hit_edge = left_hit | right_hit
-
-    vx = jnp.where(hit_edge, -enemies["vx"], enemies["vx"])
-
-    return {
-        "x": x,
-        "y": enemies["y"],
-        "w": enemies["w"],
-        "h": enemies["h"],
-        "vx": vx
-    }
-
-@jax.jit
-def enemy_fire(enemies: dict,
-               ship_x: float,
-               ship_y: float,
-               enemy_bullet_speed: float,
-               fire_cooldown: int,
-               fire_interval: int,
-               key: jax.random.PRNGKey
-               ) -> Tuple[dict, int, jax.random.PRNGKey]:
-
-    dx = ship_x - enemies["x"]
-    dy = ship_y - enemies["y"]
-    dist = jnp.sqrt(dx ** 2 + dy ** 2) + 1e-6
-    vx = dx / dist * enemy_bullet_speed
-    vy = dy / dist * enemy_bullet_speed
-
-    should_fire = (fire_cooldown == 0)
-
-    #Keep bullet shape unchanged, mark invalid bullets by setting position to -1         保持 bullets 的 shape 不变，只将位置设为 -1 表示无效
-    x_out = jnp.where(should_fire, enemies["x"], jnp.full_like(enemies["x"], -1.0))
-    y_out = jnp.where(should_fire, enemies["y"], jnp.full_like(enemies["y"], -1.0))
-    vx_out = jnp.where(should_fire, vx, jnp.zeros_like(vx))
-    vy_out = jnp.where(should_fire, vy, jnp.zeros_like(vy))
-
-    bullets_out = {
-        "x": x_out,
-        "y": y_out,
-        "vx": vx_out,
-        "vy": vy_out
-    }
-
-    fire_cooldown = jnp.where(should_fire, fire_interval, jnp.maximum(fire_cooldown - 1, 0))
-
-    return bullets_out, fire_cooldown, key
-
-def check_collision(ship_state, bullets, enemy_bullets, enemies, ship_hitbox_size):
-    def safe_filter(d, mask):
-        indices = jnp.where(mask, size=mask.shape[0])[0]
-        return {k: jnp.take(v, indices, axis=0) for k, v in d.items()}
-
-    #Filter dummy bullets (ship and enemies)     过滤 dummy bullets（飞船和敌人）
-    if bullets["x"].shape[0] > 0:
-        valid_bullet_mask = bullets["x"] >= 0.0
-        bullets = safe_filter(bullets, valid_bullet_mask)
-
-    if enemy_bullets["x"].shape[0] > 0:
-        valid_enemy_mask = enemy_bullets["x"] >= 0.0
-        enemy_bullets = safe_filter(enemy_bullets, valid_enemy_mask)  
-    #ship hitbox
-    sx1 = ship_state["x"] - ship_hitbox_size
-    sx2 = ship_state["x"] + ship_hitbox_size
-    sy1 = ship_state["y"] - ship_hitbox_size
-    sy2 = ship_state["y"] + ship_hitbox_size
-
-    #bullet hits the enemy
-    if (bullets["x"].shape[0] > 0) and (enemies["x"].shape[0] > 0):
-        bx = bullets["x"][:, None]
-        by = bullets["y"][:, None]
-
-        ex1 = enemies["x"] - enemies["w"] / 2
-        ex2 = enemies["x"] + enemies["w"] / 2
-        ey1 = enemies["y"] - enemies["h"] / 2
-        ey2 = enemies["y"] + enemies["h"] / 2
-
-        cond_bx = (bx >= ex1) & (bx <= ex2)
-        cond_by = (by >= ey1) & (by <= ey2)
-        bullet_hit_enemy = cond_bx & cond_by
-
-        bullet_hit_any_enemy = jnp.any(bullet_hit_enemy, axis=1)
-        hit_any_enemy = jnp.any(bullet_hit_enemy, axis=0)
-
-        keep_bullets = ~bullet_hit_any_enemy
-        remaining_bullets = safe_filter(bullets, keep_bullets)
-
-        alive_flags = ~hit_any_enemy
-        remaining_enemies = safe_filter(enemies, alive_flags)
-    else:
-        remaining_bullets = bullets
-        remaining_enemies = enemies
-
-    #ship crash with enemy
-    if enemies["x"].shape[0] > 0:
-        ex1 = enemies["x"] - enemies["w"] / 2
-        ex2 = enemies["x"] + enemies["w"] / 2
-        ey1 = enemies["y"] - enemies["h"] / 2
-        ey2 = enemies["y"] + enemies["h"] / 2
-
-        overlap_x = (sx1 <= ex2) & (sx2 >= ex1)
-        overlap_y = (sy1 <= ey2) & (sy2 >= ey1)
-        crashed = jnp.any(overlap_x & overlap_y)
-    else:
-        crashed = False
-
-    #enemy bullet hits the ship
-    if enemy_bullets["x"].shape[0] > 0:
-        ebx = enemy_bullets["x"]
-        eby = enemy_bullets["y"]
-        hit_by_bullet_flags = (ebx >= sx1) & (ebx <= sx2) & (eby >= sy1) & (eby <= sy2)
-        hit_by_bullet = jnp.any(hit_by_bullet_flags)
-        keep_enemy_bullets = ~hit_by_bullet_flags
-        remaining_enemy_bullets = safe_filter(enemy_bullets, keep_enemy_bullets)
-    else:
-        hit_by_bullet = False
-        remaining_enemy_bullets = enemy_bullets
-
-    return remaining_bullets, remaining_enemies, remaining_enemy_bullets, crashed, hit_by_bullet
-
-@jax.jit
-def step_core_level(state: dict,
-              action: int,
-              bullets: dict,
-              cooldown: int,
-              enemies: dict,
-              enemy_bullets: dict,
-              fire_cooldown: int,
-              key: jax.random.PRNGKey,
-              window_size: Tuple[int, int],
-              hud_height: int,
-              cooldown_max: int,
-              bullet_speed: float,
-              enemy_bullet_speed: float,
-              fire_interval: int
-              ) -> Tuple[jnp.ndarray, dict, dict, int, dict, dict, int, jax.random.PRNGKey, float, bool, dict]:
-    
-    #ship moves    飞船移动
-    new_state = ship_step(state, action, window_size, hud_height)
-    #if fire    判断开火
-    fire_actions = jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])
-    is_firing = jnp.isin(action, fire_actions)
-    #fire the bullets 发射子弹
-    bullets, cooldown = fire_bullet(new_state, is_firing, cooldown, cooldown_max, bullet_speed, bullets)
-    #update the bullets 更新子弹位置
-    bullets = update_bullets(bullets)
-    #enemy moves  敌人移动
-    enemies = enemy_step(enemies, window_width=window_size[0])
-    #enemy fire   敌人发射子弹
-    new_enemy_bullets, fire_cooldown, key = enemy_fire(
-        enemies,
-        new_state["x"],
-        new_state["y"],
-        enemy_bullet_speed,
-        fire_cooldown,
-        fire_interval,
-        key
-    )
-    #Merge bullets    合并子弹
-    enemy_bullets = {
-        "x": jnp.concatenate([enemy_bullets["x"], new_enemy_bullets["x"]]),
-        "y": jnp.concatenate([enemy_bullets["y"], new_enemy_bullets["y"]]),
-        "vx": jnp.concatenate([enemy_bullets["vx"], new_enemy_bullets["vx"]]),
-        "vy": jnp.concatenate([enemy_bullets["vy"], new_enemy_bullets["vy"]])
-    }
-    #update enemy bullets 更新敌人子弹位置
-    enemy_bullets = update_bullets(enemy_bullets)
-    #check the collision   碰撞检测
-    bullets, enemies, enemy_bullets, crashed, hit_by_bullet = check_collision(
-        new_state, bullets, enemy_bullets, enemies, ship_hitbox_size=10.0
-    )
-    #construct the observation    构建观测
-    obs = jnp.array([new_state["x"], new_state["y"], new_state["vx"], new_state["vy"], new_state["angle"]])
-    #if dead?
-    dead = crashed | hit_by_bullet
-    reward = jnp.where(dead, -10.0, -1.0)
-    done = dead
-
-    info = {
-        "crash": crashed,
-        "hit_by_bullet": hit_by_bullet
-    }
-
-    return obs, new_state, bullets, cooldown, enemies, enemy_bullets, fire_cooldown, key, reward, done, info
-
-@jax.jit
-def step_core_map(state: dict,
-                  action: int,
-                  window_size: Tuple[int, int],
-                  hud_height: int
-                  ) -> Tuple[jnp.ndarray, dict, float, bool, dict, bool, int]:
-    
-    #use the ship_step function          调用 ship_step 得到更新后的状态
-    new_state = ship_step(state, action, window_size, hud_height)
-    #construct observation   构建观测 obs
-    obs = jnp.array([
-        new_state["x"],
-        new_state["y"],
-        new_state["vx"],
-        new_state["vy"],
-        new_state["angle"]
-    ])
-
-    reward = 0.0
-    done = False
-    info = {}
-    reset = False
-    level = 0
-
-    return obs, new_state, reward, done, info, reset, level
-
-@jax.jit
-def fire_bullet(state: dict,
-                is_firing,
-                cooldown: int,
-                cooldown_max: int,
-                bullet_speed: float,
-                bullets: dict
-                ) -> Tuple[dict, int]:
-
-    tip_offset = 10.0
-    should_fire = is_firing & (cooldown == 0)
-
-    tip_x = state["x"] + jnp.cos(state["angle"]) * tip_offset
-    tip_y = state["y"] + jnp.sin(state["angle"]) * tip_offset
-    bullet_vx = jnp.cos(state["angle"]) * bullet_speed
-    bullet_vy = jnp.sin(state["angle"]) * bullet_speed
-
-    tip_x = tip_x[None]
-    tip_y = tip_y[None]
-    bullet_vx = bullet_vx[None]
-    bullet_vy = bullet_vy[None]
-    #True 分支
-    new_bullets_true = {
-        "x": jnp.concatenate([bullets["x"], tip_x]),
-        "y": jnp.concatenate([bullets["y"], tip_y]),
-        "vx": jnp.concatenate([bullets["vx"], bullet_vx]),
-        "vy": jnp.concatenate([bullets["vy"], bullet_vy]),
-    }
-    #False 分支：补一个假的“空拼接”，保持 shape 一致
-    zero_pad = jnp.zeros((1,), dtype=bullets["x"].dtype)
-    new_bullets_false = {
-        "x": jnp.concatenate([bullets["x"], zero_pad]),
-        "y": jnp.concatenate([bullets["y"], zero_pad]),
-        "vx": jnp.concatenate([bullets["vx"], zero_pad]),
-        "vy": jnp.concatenate([bullets["vy"], zero_pad]),
-    }
-
-    new_bullets = jax.lax.cond(
-        should_fire,
-        lambda _: new_bullets_true,
-        lambda _: new_bullets_false,
-        operand=None
-    )
-    
-    new_cooldown = jnp.where(should_fire, cooldown_max, jnp.maximum(cooldown - 1, 0))
-
-    return new_bullets, new_cooldown
 
 class JaxGravitar(JaxEnvironment):
     def __init__(self):
         super().__init__()
-        self.obs_shape = (5,) # [x, y, vx, vy, angle]
+        self.obs_shape = (5,)  # [x, y, vx, vy, angle]
         self.num_actions = 18
-        
-        #Initialize font library     初始化字体库
+
+        # Initialize font library     初始化字体库
         pygame.font.init()
-        #Initialize score and health    初始化分数和血条
+        # Initialize score and health    初始化分数和血条
         self.score = 0
         self.lives = 6
-        #Initialize the map    初始化地图
+        # Initialize the map    初始化地图
         self.mode = "map"
         self.planets = [
-            {"x": 60, "y": 120, "r": 15, "level_id": 0},
-            {"x": 120, "y": 200, "r": 15, "level_id": 1},
-            {"x": 200, "y": 80, "r": 15, "level_id": 2}
+            {"x": 60, "y": 120, "r": 15, "level_id": 0, "color": (255, 100, 100)},
+            {"x": 120, "y": 200, "r": 15, "level_id": 1, "color": (100, 255, 100)},
+            {"x": 200, "y": 80, "r": 15, "level_id": 2, "color": (100, 100, 255)}
         ]
         self.current_level = None
         self.game_over = False
         self.done = False
         self.key = jrandom.PRNGKey(0)
-        #List of bullets     子弹列表
-        self.bullets = {        #Store all active bullets: x, y, vx, vy        存放所有存活子弹，x, y, vx, vy,
-            "x": jnp.zeros((0,)),
-            "y": jnp.zeros((0,)),
-            "vx": jnp.zeros((0,)),
-            "vy": jnp.zeros((0,))
-        }  
+        # List of bullets     子弹列表
+        self.bullets = Bullets(  # Store all active bullets: x, y, vx, vy        存放所有存活子弹，x, y, vx, vy,
+            x=jnp.zeros((0,)),
+            y=jnp.zeros((0,)),
+            vx=jnp.zeros((0,)),
+            vy=jnp.zeros((0,)),
+            alive=jnp.zeros((0,), dtype=bool)
+        )
         self.bullets_speed = 5.0
 
-        #Enemy bullet list    enemy子弹列表
-        self.enemy_bullets = {
-            "x": jnp.zeros((0,)),
-            "y": jnp.zeros((0,)),
-            "vx": jnp.zeros((0,)),
-            "vy": jnp.zeros((0,))
-        }
+        # Enemy bullet list    enemy子弹列表
+        self.enemy_bullets = Bullets(
+            x=jnp.zeros((0,)),
+            y=jnp.zeros((0,)),
+            vx=jnp.zeros((0,)),
+            vy=jnp.zeros((0,)),
+            alive=jnp.zeros((0,), dtype=bool)
+        )
         self.enemy_fire_cooldown = 0
         self.enemy_fire_interval = 60
         self.enemy_bullet_speed = 5.0
-        
-        #Shooting cooldown    射击cd
+
+        # Shooting cooldown    射击cd
         self.cooldown = 0
         self.cooldown_max = 5
-        
-        #Set window size     设置窗口大小
+
+        # Set window size     设置窗口大小
         self.screen_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
         pygame.init()
         self.screen = pygame.display.set_mode(self.screen_size)
         pygame.display.set_caption("Gravitar")
 
     def draw_hud(self):
-        #Background    背景
+        # Background    背景
         pygame.draw.rect(self.screen, (0, 0, 0), (0, 0, WINDOW_WIDTH, HUD_HEIGHT))
 
-        #Score   分数
+        # Score   分数
         font = pygame.font.SysFont("Arial", 14, bold=True)
         score_text = font.render(str(self.score), True, (255, 128, 255))
-        text_rect = score_text.get_rect(center=(WINDOW_WIDTH //2, HUD_PADDING + 6))
+        text_rect = score_text.get_rect(center=(WINDOW_WIDTH // 2, HUD_PADDING + 6))
         self.screen.blit(score_text, text_rect)
 
-        #Health bar   血条
+        # Health bar   血条
         total_width = self.lives * HUD_SHIP_SPACING
         start_x = (WINDOW_WIDTH - total_width) // 2
         for i in range(self.lives):
@@ -511,17 +745,17 @@ class JaxGravitar(JaxEnvironment):
         Returns: The action space of the environment as a tuple.
         """
         # raise NotImplementedError("Abstract method")
-        return (18,)  #Supports actions numbered 0 to 17    支持编号0到17的动作
-    
+        return (18,)  # Supports actions numbered 0 to 17    支持编号0到17的动作
+
     def get_observation_space(self) -> Tuple[int]:
         """
         Returns the observation space of the environment.
         Returns: The observation space of the environment as a tuple.
         """
-        #raise NotImplementedError("Abstract method")
+        # raise NotImplementedError("Abstract method")
         return (5,)
-    
-    def render(self, state: dict) -> Tuple[jnp.ndarray]:
+
+    def render(self, state: ShipState) -> Tuple[jnp.ndarray]:
         """
         Renders the environment state to a single image.
         Args:
@@ -530,278 +764,208 @@ class JaxGravitar(JaxEnvironment):
         Returns: A single image of the environment state.
 
         """
-        #raise NotImplementedError("Abstract method")
+        # raise NotImplementedError("Abstract method")
 
         self.screen.fill((0, 0, 0))
         if self.mode == "map":
-            #Draw planets    画星球
+            # Draw planets    画星球
             for planet in self.planets:
                 color = planet.get("color", (0, 255, 255))
                 pygame.draw.circle(self.screen, color, (planet["x"], planet["y"]), planet["r"])
-    # Render triangular spaceship      渲染三角形飞船
+        # Render triangular spaceship      渲染三角形飞船
         # Spaceship center position    飞船中心位置
-        cx, cy = float(state["x"]), float(state["y"])
-        angle = float(state["angle"])
-        size = 10  #Size of the spaceship tip    飞船箭头大小
-        #Three triangle vertices, angle indicates direction      三角形三个顶点位置，angle指向朝向
+        cx, cy = float(state.x), float(state.y)
+        angle = float(state.angle)
+        size = 10  # Size of the spaceship tip    飞船箭头大小
+        # Three triangle vertices, angle indicates direction      三角形三个顶点位置，angle指向朝向
         tip = (cx + math.cos(angle) * size, cy + math.sin(angle) * size)
         left = (cx + math.cos(angle + 2.5) * size, cy + math.sin(angle + 2.5) * size)
         right = (cx + math.cos(angle - 2.5) * size, cy + math.sin(angle - 2.5) * size)
         # Clear background   清空背景
         self.draw_hud()
-        #Draw spaceship  画飞船
+        # Draw spaceship  画飞船
         pygame.draw.polygon(self.screen, (0, 255, 0), [tip, left, right])
 
-        #Draw enemy   画enemy
+        # Draw enemy   画enemy
         if self.mode == "level":
-            for i in range(len(self.enemies["x"])):
-                ex = self.enemies["x"][i]
-                ey = self.enemies["y"][i]
-                ew = self.enemies["w"][i]
-                eh = self.enemies["h"][i]
+            for i in range(len(self.enemies.x)):
+                if self.enemies.w[i] == 0:
+                    continue
+                ex = self.enemies.x[i]
+                ey = self.enemies.y[i]
+                ew = self.enemies.w[i]
+                eh = self.enemies.h[i]
                 pygame.draw.rect(self.screen, (255, 0, 0), (int(ex), int(ey), int(ew), int(eh)))
-        
-        #Score  得分
+
+        # Score  得分
         font = pygame.font.SysFont(None, 24)
         score_text = font.render(f"Score: {self.score}", True, (255, 255, 255))
-        self.screen.blit(score_text, (10, 10)) 
-            
+        self.screen.blit(score_text, (10, 10))
         # Render bullets   渲染子弹
-        for bx, by in zip(self.bullets["x"], self.bullets["y"]):
+        for i in range(len(self.bullets.x)):
+            if not self.bullets.alive[i]:
+                continue
+            bx = self.bullets.x[i]
+            by = self.bullets.y[i]
             if bx >= 0 and by >= 0:  # 排除 dummy bullets
-                pygame.draw.circle(self.screen, (255, 255, 0), (int(bx), int(by)), 2)#yellow
-        #Render enemy bullets    渲染enemy子弹
-        for bx, by in zip(self.enemy_bullets["x"], self.enemy_bullets["y"]):
+                pygame.draw.circle(self.screen, (255, 255, 0), (int(bx), int(by)), 2)
+        # Render enemy bullets    渲染enemy子弹
+
+        for i in range(len(self.enemy_bullets.x)):
+            if not self.enemy_bullets.alive[i]:
+                continue
+            bx = self.enemy_bullets.x[i]
+            by = self.enemy_bullets.y[i]
             if bx >= 0 and by >= 0:
                 pygame.draw.circle(self.screen, (255, 100, 0), (int(bx), int(by)), 3)
-        #gameover screen
+        # gameover screen
         if hasattr(self, "done") and self.done:
             font = pygame.font.SysFont(None, 72)
             text = font.render("game over", True, (255, 0, 0))
-            text_rect = text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT // 2))
+            text_rect = text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
             self.screen.blit(text, text_rect)
 
-
         pygame.display.flip()
-        pygame.time.delay(100)
 
         dummy_image = jnp.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3))
         return (dummy_image,)
 
-    def reset(self, key: jrandom.PRNGKey=None) -> Tuple[jnp.ndarray, dict]:
-        self.lives = 6
-        self.done = False
-        self.game_over = False
-        self.key = key if key is not None else jrandom.PRNGKey(0)
-        return self.reset_map(self.key)
-
-    def reset_map(self, key: jrandom.PRNGKey) -> Tuple[jnp.ndarray, dict]:
-        self.mode = "map"
-        self.current_level = None
-        self.score = 0
-        self.cooldown = 0
-        self.enemy_fire_cooldown = 0
-        self.enemies = []
-        #添加星球
-        self.planets = [
-            {"x": 80, "y": 100, "r": 15, "level_id": 0, "color": (255, 100, 100)},
-            {"x": 150, "y": 180, "r": 15, "level_id": 1, "color": (100, 255, 100)},
-            {"x": 230, "y": 60, "r": 15, "level_id": 2, "color": (100, 100, 255)}
-        ]
-
-        state = {
-            "x": jnp.array(WINDOW_WIDTH / 2),
-            "y": jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2),
-            "vx": jnp.array(0.0),
-            "vy": jnp.array(0.0),
-            "angle": jnp.array(-jnp.pi / 2)
-        } 
-        # 初始化 bullets
-        self.bullets = {
-            "x": jnp.zeros((0,)),
-            "y": jnp.zeros((0,)),
-            "vx": jnp.zeros((0,)),
-            "vy": jnp.zeros((0,))
-        }
-
-        self.enemy_bullets = {
-            "x": jnp.zeros((0,)),
-            "y": jnp.zeros((0,)),
-            "vx": jnp.zeros((0,)),
-            "vy": jnp.zeros((0,))
-        }
-
-        obs = jnp.array([state["x"], state["y"], state["vx"], state["vy"], state["angle"]])
-
-        return obs, state
-
-    def reset_level(self, key: jrandom.PRNGKey, level_id: int) -> Tuple[jnp.ndarray, dict]:
-        """
-        Resets the environment to the initial state.
-        Returns: The initial observation and the initial environment state.
-
-        """
-        self.mode = "level"
-        self.current_level = level_id
-        self.cooldown = 0
-        self.enemy_fire_cooldown = 0
-        self.score = 0
-        self.done = False
-        #Initialize spaceship state     初始化飞船状态
-        state = {
-            "x": jnp.array(WINDOW_WIDTH / 2),
-            "y": jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2),
-            "vx": jnp.array(0.0),
-            "vy": jnp.array(0.0),
-            "angle": jnp.array(-jnp.pi / 2)
-        }
-
-        self.bullets = {
-            "x": jnp.zeros((0,)),
-            "y": jnp.zeros((0,)),
-            "vx": jnp.zeros((0,)),
-            "vy": jnp.zeros((0,))
-        }
-
-        self.enemy_bullets = {
-            "x": jnp.zeros((0,)),
-            "y": jnp.zeros((0,)),
-            "vx": jnp.zeros((0,)),
-            "vy": jnp.zeros((0,))
-        }
-
-        #Enemy parameters    enemy参数
-        num_enemies = 5
-        enemy_w, enemy_h = 10, 10
-
-        keys = jax.random.split(key, num_enemies * 3)
-
-        enemy_x = []
-        enemy_y = []
-        enemy_w_arr = []
-        enemy_h_arr = []
-        enemy_vx = []
-
-        for i in range(num_enemies):
-            x = jrandom.randint(keys[i * 3 + 0], (), 60, WINDOW_WIDTH - 80)
-            y = jrandom.randint(keys[i * 3 + 1], (), 60, WINDOW_HEIGHT - 100)
-            move_flag = jrandom.uniform(keys[i * 3 + 2]) < 0.5
-            vx = jnp.where(jrandom.bernoulli(keys[i * 3 + 2]), 1.5, -1.5) if move_flag else 0.0
-
-            enemy_x.append(float(x))
-            enemy_y.append(float(y))
-            enemy_w_arr.append(float(enemy_w))
-            enemy_h_arr.append(float(enemy_h))
-            enemy_vx.append(float(vx))
-
-        self.enemies = {
-            "x": jnp.array(enemy_x),
-            "y": jnp.array(enemy_y),
-            "w": jnp.array(enemy_w_arr),
-            "h": jnp.array(enemy_h_arr),
-            "vx": jnp.array(enemy_vx)
-        }
-        
-        #Output observation    输出observation
-        obs = jnp.array([state["x"], state["y"],state["vx"],state["vy"],state["angle"]])
-
-        return obs, state
-        #raise NotImplementedError("Abstract method")
-    
-    def step(self, state: dict, action: int) -> Tuple[jnp.ndarray, dict, float, bool, dict]:
-        """
-        执行一个step：输入：当前state+哪个动作
-        输出：环境观测，环境状态，reward，是否结束，环境信息
-        dictionary用来存放x,y,vx,vy,angle      
-        Takes a step in the environment.
-        Args:
-            state: The current environment state.
-            action: The action to take.
-
-        Returns: The observation, the new environment state, the reward, whether the state is terminal, and additional info.
-
-        """
-        #raise NotImplementedError("Abstract method")
-        #Select map    选地图
-        if self.mode == "map":
-            # Unpack state  解包状态
-            obs, new_state, reward, done, info, reset, level = step_core_map(
-                state,
-                action,
-                (WINDOW_WIDTH, WINDOW_HEIGHT),
-                HUD_HEIGHT
-            )
-
-            x, y = float(new_state["x"]), float(new_state["y"])
-            entered = False
-            for planet in self.planets:
-                dx = x - planet["x"]
-                dy = y - planet["y"]
-                dist2 = dx * dx + dy * dy
-                if dist2 <= planet["r"] * planet["r"]:
-                    entered = True
-                    entered_level = planet["level_id"]
-                    break
-
-            if entered:
-                self.key, subkey = jrandom.split(self.key)
-                obs, new_state = self.reset_level(subkey, entered_level)
-                reward = 0.0
-                done = False
-                info = {"entered_level": True}
-            else:
-                reward = -1.0
-                done = False
-                info = {}
-
-            return obs, new_state, reward, done, info
-        #In level mode    在level里
-        obs, new_state, self.bullets, self.cooldown, self.enemies, self.enemy_bullets, self.enemy_fire_cooldown, self.key, reward, done, info = step_core_level(
-            state,
-            action,
-            self.bullets,
-            self.cooldown,
-            self.enemies,
-            self.enemy_bullets,
-            self.enemy_fire_cooldown,
-            self.key,
-            (WINDOW_WIDTH, WINDOW_HEIGHT),
-            HUD_HEIGHT,
-            self.cooldown_max,
-            self.bullets_speed,
-            self.enemy_bullet_speed,
-            self.enemy_fire_interval
+    def reset_map(self, key: jnp.ndarray) -> Tuple[jnp.ndarray, EnvState]:
+        ship_state = ShipState(
+            x=jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32),
+            y=jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2, dtype=jnp.float32),
+            vx=jnp.array(0.0, dtype=jnp.float32),
+            vy=jnp.array(0.0, dtype=jnp.float32),
+            angle=jnp.array(-jnp.pi / 2, dtype=jnp.float32)
         )
 
-        #when the ship is dead?   死亡逻辑: 飞船被打或撞
-        if done:
-            self.lives -= 1
-            if self.lives <= 0:
-                self.game_over = True
-            else:
-                self.key, subkey = jrandom.split(self.key)
-                obs, new_state = self.reset_level(subkey, self.current_level)
-                info["respawn"] = True
-                done = False
+        env_state = EnvState(
+            mode=0,
+            state=ship_state,
+            bullets=create_empty_bullets_64(),
+            cooldown=jnp.array(0, dtype=jnp.int32),
+            enemies=create_empty_enemies(),
+            enemy_bullets=create_empty_bullets_16(),
+            fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
+            key=key,
+            key_alt=key,
+            score=jnp.array(0.0, dtype=jnp.float32),
+            done=False,
+            lives=jnp.array(6, dtype=jnp.int32)
+        )
 
-        #how to success?    通关逻辑: 敌人全灭
-        if (not done) and (len(self.enemies["x"]) == 0):
-            self.key, subkey = jrandom.split(self.key)
-            obs, new_state = self.reset_map(subkey)
-            reward = 10.0
-            info["level_cleared"] = True
-            done = False
+        obs = jnp.array([
+            ship_state.x,
+            ship_state.y,
+            ship_state.vx,
+            ship_state.vy,
+            ship_state.angle
+        ])
 
-        self.done = done
-        return obs, new_state, reward, done, info
+        return obs, env_state
+
+    def reset(self, key: jnp.ndarray = jax.random.PRNGKey(0)) -> Tuple[jnp.ndarray, EnvState]:
+        obs, env_state = self.reset_map(key)
+        return obs, env_state
+
+    def reset_level(self, key: jnp.ndarray, level_id: int) -> Tuple[jnp.ndarray, EnvState]:
+        ship_state = ShipState(
+            x=jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32),
+            y=jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2, dtype=jnp.float32),
+            vx=jnp.array(0.0, dtype=jnp.float32),
+            vy=jnp.array(0.0, dtype=jnp.float32),
+            angle=jnp.array(-jnp.pi / 2, dtype=jnp.float32)
+        )
+
+        # 根据 level_id 配置参数
+        if level_id == 0:
+            num_enemies = 3
+            enemy_speed = 1.0
+            spawn_x_range = (60, WINDOW_WIDTH - 80)
+            spawn_y_range = (60, WINDOW_HEIGHT - 100)
+        elif level_id == 1:
+            num_enemies = 5
+            enemy_speed = 1.5
+            spawn_x_range = (100, WINDOW_WIDTH - 100)
+            spawn_y_range = (100, WINDOW_HEIGHT - 120)
+        else:
+            num_enemies = 7
+            enemy_speed = 2.0
+            spawn_x_range = (120, WINDOW_WIDTH - 120)
+            spawn_y_range = (120, WINDOW_HEIGHT - 140)
+
+        enemy_w, enemy_h = 14.0, 14.0
+        keys = jax.random.split(key, num_enemies * 3)
+
+        x = jnp.array([
+            jax.random.randint(keys[i * 3 + 0], (), spawn_x_range[0], spawn_x_range[1])
+            for i in range(num_enemies)
+        ], dtype=jnp.float32)
+
+        y = jnp.array([
+            jax.random.randint(keys[i * 3 + 1], (), spawn_y_range[0], spawn_y_range[1])
+            for i in range(num_enemies)
+        ], dtype=jnp.float32)
+
+        vx = jnp.array([
+            jnp.where(
+                jax.random.bernoulli(keys[i * 3 + 2]),
+                enemy_speed,
+                -enemy_speed
+            )
+            for i in range(num_enemies)
+        ], dtype=jnp.float32)
+
+        def pad(arr, fill_val=0.0):
+            return jnp.pad(arr, (0, MAX_ENEMIES - arr.shape[0]), constant_values=fill_val)
+
+        enemies = Enemies(
+            x=pad(x),
+            y=pad(y),
+            w=pad(jnp.full((num_enemies,), enemy_w, dtype=jnp.float32)),
+            h=pad(jnp.full((num_enemies,), enemy_h, dtype=jnp.float32)),
+            vx=pad(vx)
+        )
+
+        fire_cooldown = jnp.full((MAX_ENEMIES,), 999, dtype=jnp.int32).at[:num_enemies].set(0)
+
+        env_state = EnvState(
+            mode=1,
+            state=ship_state,
+            bullets=create_empty_bullets_64(),
+            cooldown=jnp.array(0, dtype=jnp.int32),  # 飞船的cd
+            enemies=enemies,
+            enemy_bullets=create_empty_bullets_16(),
+            fire_cooldown=fire_cooldown,
+            key=key,
+            key_alt=key,
+            score=jnp.array(0.0, dtype=jnp.float32),
+            done=False,
+            lives=jnp.array(6, dtype=jnp.int32)
+        )
+
+        obs = jnp.array([
+            ship_state.x,
+            ship_state.y,
+            ship_state.vx,
+            ship_state.vy,
+            ship_state.angle
+        ])
+
+        return obs, env_state
+
+    def step(self, env_state: EnvState, action: int):
+        obs, new_env_state, reward, done, info, reset, level = step_core(env_state, action)
+        return obs, new_env_state, reward, done, info, reset, level
+
 
 if __name__ == "__main__":
     env = JaxGravitar()
-    #Initialize random seed    初始化随机种子
+    # Initialize random seed    初始化随机种子
     key = jax.random.PRNGKey(0)
-    #Get initial observation and state            得到初始观测和状态obs, state
-    obs, state = env.reset(key)
-    #loop 循环
+    # Get initial observation and state            得到初始观测和状态obs, state
+    obs, env_state = env.reset(key)
+    # use the loopto play the game     循环
     running = True
     clock = pygame.time.Clock()
 
@@ -811,20 +975,68 @@ if __name__ == "__main__":
                 running = False
 
         keys = pygame.key.get_pressed()
-        if env.done:
-            env.render(state)
-            if keys[pygame.K_r]:
-                key, subkey = jrandom.split(key)
-                obs, state = env.reset(subkey)
-                env.done = False
-            else:
+
+        if env_state.done:
+            env.lives -= 1
+            if env.lives <= 0:
+                env.done = True
+                env.render(env_state.state)
                 pygame.time.wait(100)
+                continue
+            else:
+                key, subkey = jrandom.split(key)
+                obs, env_state = env.reset_level(subkey, env.current_level)
+                # 更新可视化用的敌人和子弹状态
+                env.enemies = env_state.enemies
+                env.bullets = env_state.bullets
+                continue
+
+        env.render(env_state.state)
+        action = get_action_from_key()
+
+        # Use jittable step
+        obs, env_state, reward, done, info, reset, level = env.step(env_state, action)
+
+        reset_flag = bool(reset)
+        level_id = int(level)
+
+        if reset_flag and level_id >= 0:
+            print(f"进入星球 {level_id}，切换到 level 模式")
+            env.mode = "level"
+            env.current_level = level_id
+
+            key, subkey = jrandom.split(key)
+            obs, env_state = env.reset_level(subkey, level_id)
+
+            # 同步子弹和敌人信息用于渲染
+            env.enemies = env_state.enemies
+            env.bullets = env_state.bullets
             continue
 
-        #Read keyboard        读键盘
-        action = get_action_from_key()
-        #Environment interaction              环境交互
-        obs, state, reward, done, info = env.step(state, action)
-        env.render(state)
+        # 如果敌人全部被击败，回到地图
+        if reset_flag and level_id == -1:
+            print("敌人全部消灭，返回地图选择界面")
+            env.mode = "map"
 
+            key, subkey = jrandom.split(key)
+            obs, env_state = env.reset_map(subkey)
+            obs = jnp.array([
+                env_state.state.x,
+                env_state.state.y,
+                env_state.state.vx,
+                env_state.state.vy,
+                env_state.state.angle
+            ])
+
+            # 同步渲染信息
+            env.bullets = env_state.bullets
+            env.enemy_bullets = env_state.enemy_bullets
+            env.enemies = env_state.enemies
+            continue
+
+        if env.mode == "level":
+            env.enemies = env_state.enemies
+            env.bullets = env_state.bullets
+            env.enemy_bullets = env_state.enemy_bullets
+            env.score = env_state.score
         clock.tick(30)

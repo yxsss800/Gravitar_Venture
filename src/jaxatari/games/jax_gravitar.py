@@ -294,6 +294,7 @@ def ship_step(state: ShipState,
     rotation_speed = 0.2
     thrust_power = 0.4
     gravity = 0.08
+    bounce_damping = 0.2  # Damping factor for bounce velocity
 
     rotate_right_actions = jnp.array([3, 6, 8, 11, 14, 16])
     rotate_left_actions = jnp.array([4, 7, 9, 12, 15, 17])
@@ -315,12 +316,36 @@ def ship_step(state: ShipState,
 
     vy += gravity
 
-    x = state.x + vx
-    y = state.y + vy
-
+    next_x_unclipped = state.x + vx
+    next_y_unclipped = state.y + vy
+    ship_half_size = 5
     window_width, window_height = window_size
-    x = jnp.clip(x, 0, window_width - 5)
-    y = jnp.clip(y, hud_height, window_height - 5)
+
+    # --- Boundary collision and bounce logic ---
+    # Horizontal bounce
+    hit_left = next_x_unclipped < ship_half_size
+    hit_right = next_x_unclipped > window_width - ship_half_size
+
+    # Store old vx and vy for bounce calculation
+    old_vx = vx
+    old_vy = vy
+
+    # Apply bounce to velocities
+    vx = jnp.where(hit_left | hit_right, -old_vx * bounce_damping, old_vx)
+
+    # Update position based on potentially bounced velocity, then clip
+    x = state.x + vx  # Use the (potentially bounced) new vx
+    x = jnp.clip(x, ship_half_size, window_width - ship_half_size)  # Clip to ensure it's precisely at the edge
+
+    # Vertical bounce
+    hit_top = next_y_unclipped < hud_height + ship_half_size
+    hit_bottom = next_y_unclipped > window_height - ship_half_size
+
+    vy = jnp.where(hit_top | hit_bottom, -old_vy * bounce_damping, old_vy)
+
+    # Update position based on potentially bounced velocity, then clip
+    y = state.y + vy  # Use the (potentially bounced) new vy
+    y = jnp.clip(y, hud_height + ship_half_size, window_height - ship_half_size)
 
     return ShipState(x=x, y=y, vx=vx, vy=vy, angle=angle)
 

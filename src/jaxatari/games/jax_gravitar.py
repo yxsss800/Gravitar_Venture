@@ -1,4 +1,6 @@
+import os
 import jax
+import chex
 import jax.numpy as jnp
 import pygame
 from functools import partial
@@ -7,6 +9,7 @@ from jaxatari.core import JaxEnvironment
 import jax.random as jrandom
 from typing import Tuple, NamedTuple
 import math
+from typing import NamedTuple, Tuple, Dict, Any, Optional
 
 """
     Group member of the Gravitar: Xusong Yin, Elizaveta Kuznetsova, Li Dai
@@ -1065,3 +1068,92 @@ if __name__ == "__main__":
             env.enemy_bullets = env_state.enemy_bullets
             env.score = env_state.score
         clock.tick(30)
+    
+    
+    
+def _load_sprites(self) -> dict[str, Any]:
+    """Loads all necessary sprites from .npy files."""
+sprites: Dict[str, Any] = {}       
+       
+       
+import jaxatari.rendering.atraJaxis as aj
+from jaxatari.renderers import AtraJaxisRenderer
+        
+class GravitarRenderer(AtraJaxisRenderer):
+    # Type hint for sprites dictionary
+    sprites: Dict[str, Any]       
+    
+    def __init__(self):
+        """
+        Initializes the renderer by loading sprites, including level backgrounds.
+
+        Args:
+            sprite_path: Path to the directory containing sprite .npy files.
+        """
+        self.sprite_path = f"{os.path.dirname(os.path.abspath(__file__))}/sprites/gravitar"
+        self.sprites = self._load_sprites()
+        # Store background sprites directly for use in render function
+        
+        """
+        ///////////////////////////////////////
+        self.background_0 = self.sprites.get('background_0')
+        self.background_1 = self.sprites.get('background_1')
+        self.background_2 = self.sprites.get('background_2')
+        """
+
+    def _load_sprites(self) -> dict[str, Any]:
+        """Loads all necessary sprites from .npy files."""
+        sprites: Dict[str, Any] = {}
+        
+        # Helper function to load a single sprite frame
+        def _load_sprite_frame(name: str) -> Optional[chex.Array]:
+            path = os.path.join(self.sprite_path, f'{name}.npy')
+            frame = aj.loadFrame(path)
+            if isinstance(frame, jnp.ndarray) and frame.ndim >= 2:
+                return frame.astype(jnp.uint8)
+            
+        
+        # --- Load Sprites ---
+        # Backgrounds + Dynamic elements + UI elements
+        # background_0 is black background
+        sprite_names = [
+            'background_0', 'background_1', 
+            'purple_planet', 'green_planet', 'grey_planet', 'brown_planet',
+            'blue_planet', 'turquoise_planet', 'pink_planet', 
+            'spacecraft', 'enemy', 'blue_dot',
+        ]
+        for name in sprite_names:
+            loaded_sprite = _load_sprite_frame(name)
+            if loaded_sprite is not None:
+                 sprites[name] = loaded_sprite    
+            
+        
+        # pad the kangaroo and monkey sprites since they have to be used interchangeably (and jax enforces same sizes)
+        planet_sprites = aj.pad_to_match([sprites['purple_planet'], 
+                                          sprites['green_planet'], 
+                                          sprites['grey_planet'], 
+                                          sprites['brown_planet'], 
+                                          sprites['blue_planet'], 
+                                          sprites['turquoise_planet'], 
+                                          sprites['pink_planet']])
+
+
+
+        sprites['purple_planet'] = planet_sprites[0]
+        sprites['green_planet'] = planet_sprites[1]
+        sprites['grey_planet'] = planet_sprites[2]
+        sprites['brown_planet'] = planet_sprites[3]
+        sprites['blue_planet'] = planet_sprites[4]
+        sprites['turquoise_planet'] = planet_sprites[5]
+        sprites['pink_planet'] = planet_sprites[6]
+
+
+         # expand all sprites similar to the Pong/Seaquest loading
+        for key in sprites.keys():
+            if isinstance(sprites[key], (list, tuple)):
+                sprites[key] = [jnp.expand_dims(sprite, axis=0) for sprite in sprites[key]]
+            else:
+                sprites[key] = jnp.expand_dims(sprites[key], axis=0)
+
+        return sprites
+            

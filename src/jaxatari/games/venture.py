@@ -132,25 +132,25 @@ class JaxVenture(JaxEnvironment[GameState, chex.Array, dict]):
         return PlayerState(x=new_x, y=new_y, direction=player_state.direction)
 
     def _reset_room_entities(self, key, room_id):
-        # TODO: [PROJ-45] Load monster and treasure positions from predefined level data.
+        # TODO: Load monster and treasure positions from predefined level data.
         return self._create_empty_monsters(), self._create_empty_treasures()
 
     def _update_arrows(self, arrows_state, player_state, is_firing, cooldown):
-        # TODO: [PROJ-46] Implement arrow spawning and movement physics.
+        # TODO: Implement arrow spawning and movement physics.
         if is_firing:
             raise NotImplementedError("Arrow spawning logic is not implemented. See PROJ-46.")
 
         return arrows_state
 
     def _update_monsters(self, monsters_state, player_state, key):
-        # TODO: [PROJ-47] Implement monster AI logic (e.g., pathfinding to player).
+        # TODO: Implement monster AI logic (e.g., pathfinding to player).
         if jnp.any(monsters_state.alive):
             raise NotImplementedError("Monster AI is not implemented. See PROJ-47.")
 
         return monsters_state
 
     def _handle_collisions(self, player, arrows, monsters, treasures, death_cooldown):
-        # TODO: [PROJ-48] Implement all collision checks (Player-Monster, Arrow-Monster, etc.).
+        # TODO: Implement all collision checks (Player-Monster, Arrow-Monster, etc.).
         raise NotImplementedError("Collision handling is not implemented. See PROJ-48.")
 
     def _create_empty_arrows(self) -> ArrowState:

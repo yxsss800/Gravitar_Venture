@@ -62,10 +62,10 @@ WINDOW_HEIGHT = 210
 
 SAUCER_SPAWN_DELAY_FRAMES = 60 *3
 SAUCER_RESPAWN_DELAY_FRAMES = 180 * 3
-SAUCER_SPEED_MAP = jnp.float32(0.4)
-SAUCER_SPEED_ARENA = jnp.float32(0.4)
-SAUCER_RADIUS = jnp.float32(18.0)
-SHIP_RADIUS   = jnp.float32(12.0)
+SAUCER_SPEED_MAP = jnp.float32(0.2)
+SAUCER_SPEED_ARENA = jnp.float32(0.2)
+SAUCER_RADIUS = jnp.float32(0.3)
+SHIP_RADIUS   = jnp.float32(0.2)
 SAUCER_INIT_HP = jnp.int32(1)
 
 SAUCER_SCALE              = 2.2
@@ -76,9 +76,9 @@ UFO_SCALE = 2.5
 
 SAUCER_EXPLOSION_FRAMES = jnp.int32(60) 
 SAUCER_FIRE_INTERVAL_FRAMES = jnp.int32(24)  
-SAUCER_BULLET_SPEED         = jnp.float32(2)
+SAUCER_BULLET_SPEED         = jnp.float32(0.4)
 ENEMY_EXPLOSION_FRAMES = jnp.int32(60) 
-UFO_HIT_RADIUS = jnp.float32(16.0) 
+UFO_HIT_RADIUS = jnp.float32(0.3) 
 
 def _jax_rotate(image, angle_deg, reshape=False, order=1, mode='constant', cval=0):
     angle_rad = jnp.deg2rad(angle_deg)
@@ -567,7 +567,7 @@ def create_env_state(rng: jnp.ndarray) -> EnvState:
         reactor_dest_active=jnp.array(False), 
         reactor_dest_x=jnp.float32(0.0),
         reactor_dest_y=jnp.float32(0.0),
-        reactor_dest_radius=jnp.float32(8.0), 
+        reactor_dest_radius=jnp.float32(0.25), 
         saucer=make_default_saucer(),
         saucer_spawn_timer=jnp.int32(SAUCER_SPAWN_DELAY_FRAMES),
         map_return_x=jnp.float32(0.0),
@@ -688,7 +688,7 @@ def fire_bullet(bullets: Bullets, ship_x, ship_y, ship_angle, bullet_speed):
     return jax.lax.cond(can_fire, add_bullet, skip_bullet, operand=None)
 
 @jax.jit
-def _fire_single_from_to(bullets: Bullets, sx, sy, tx, ty, speed=jnp.float32(3.5)) -> Bullets:
+def _fire_single_from_to(bullets: Bullets, sx, sy, tx, ty, speed=jnp.float32(0.7)) -> Bullets:
     dx = tx - sx
     dy = ty - sy
     d = jnp.maximum(jnp.sqrt(dx*dx + dy*dy), 1e-3)
@@ -761,7 +761,7 @@ def check_ship_hit(state: ShipState, bullets: Bullets, hitbox_size: float) -> bo
 @jax.jit
 def check_enemy_hit(bullets: Bullets, enemies: Enemies) -> Tuple[Bullets, Enemies]:
     #1. Perform all collision detection calculations first
-    padding = 2.0
+    padding = 0.1
     ex1 = enemies.x - enemies.w / 2 - padding
     ex2 = enemies.x + enemies.w / 2 + padding
     ey1 = enemies.y - enemies.h / 2 - padding
@@ -815,7 +815,7 @@ def check_enemy_hit(bullets: Bullets, enemies: Enemies) -> Tuple[Bullets, Enemie
     return new_bullets, new_enemies
 
 @jax.jit
-def terrain_hit(env_state: EnvState, x: jnp.ndarray, y: jnp.ndarray, radius=jnp.float32(6.0)) -> jnp.ndarray:
+def terrain_hit(env_state: EnvState, x: jnp.ndarray, y: jnp.ndarray, radius=jnp.float32(0.3)) -> jnp.ndarray:
     offset_x, offset_y = env_state.level_offset[0], env_state.level_offset[1]
     adjusted_x, adjusted_y = x - offset_x, y - offset_y
     H, W = env_state.terrain_bank.shape[1], env_state.terrain_bank.shape[2]
@@ -846,7 +846,7 @@ def terrain_hit(env_state: EnvState, x: jnp.ndarray, y: jnp.ndarray, radius=jnp.
 def consume_ship_hits(state, bullets, hitbox_size):
     # Ship's collision radius
     hs    = jnp.asarray(hitbox_size, dtype=jnp.float32)
-    eff_r = hs + jnp.float32(2.0)
+    eff_r = hs + jnp.float32(0.04)
     hit_mask = bullets.alive & _segment_hits_circle(
         bullets.x, bullets.y, bullets.vx, bullets.vy,
         state.x,     state.y,   eff_r
@@ -883,10 +883,17 @@ def ship_step(state: ShipState,
               action: int,
               window_size: tuple[int, int],
               hud_height: int) -> ShipState:
-    rotation_speed = 0.1
-    thrust_power = 0.04
-    gravity = 0.005
+    rotation_speed = 0.03
+    thrust_power = 0.03
+    gravity = 0.01
+    
     bounce_damping = 0.2  # Damping factor for bounce velocity
+    damping_factor = 0.99
+    max_speed = 0.6
+
+    vx = state.vx * damping_factor
+    vy = state.vy * damping_factor
+
     rotate_right_actions = jnp.array([3, 6, 8, 11, 14, 16])
     rotate_left_actions = jnp.array([4, 7, 9, 12, 15, 17])
     thrust_actions = jnp.array([2, 6, 7, 10, 14, 15])
@@ -895,16 +902,35 @@ def ship_step(state: ShipState,
     left = jnp.isin(action, rotate_left_actions)
     thrust = jnp.isin(action, thrust_actions)
     down_thrust = jnp.isin(action, down_thrust_actions)
+
     angle = jnp.where(right, state.angle + rotation_speed, state.angle)
     angle = jnp.where(left, angle - rotation_speed, angle)
+
     vx = jnp.where(thrust, state.vx + jnp.cos(angle) * thrust_power, state.vx)
     vy = jnp.where(thrust, state.vy + jnp.sin(angle) * thrust_power, state.vy)
     vx = jnp.where(down_thrust, vx - jnp.cos(angle) * thrust_power, vx)
     vy = jnp.where(down_thrust, vy - jnp.sin(angle) * thrust_power, vy)
     vy += gravity
+    speed_sq = vx**2 + vy**2
+    def cap_velocity(v_tuple):
+        v_x, v_y, spd_sq = v_tuple
+        speed = jnp.sqrt(spd_sq)
+        scale = max_speed / speed
+        return v_x * scale, v_y * scale
+    
+    def no_op(v_tuple):
+        return v_tuple[0], v_tuple[1]
+
+    vx, vy = jax.lax.cond(
+        speed_sq > max_speed**2,
+        cap_velocity,
+        no_op,
+        (vx, vy, speed_sq)
+    )
+
     next_x_unclipped = state.x + vx
     next_y_unclipped = state.y + vy
-    ship_half_size = 12
+    ship_half_size = 2
     window_width, window_height = window_size
    
     # --- Boundary collision and bounce logic ---
@@ -946,7 +972,7 @@ def _get_reactor_center(px, py, pi) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarr
     return rx, ry, any_reactor
 
 @jax.jit
-def _spawn_saucer_at(x, y, towards_x, towards_y, speed=jnp.float32(1.2)) -> SaucerState:
+def _spawn_saucer_at(x, y, towards_x, towards_y, speed=jnp.float32(0.8)) -> SaucerState:
     dx = towards_x - x
     dy = towards_y - y
     d = jnp.maximum(jnp.sqrt(dx*dx + dy*dy), 1e-3)
@@ -1133,7 +1159,7 @@ def step_core_map(state: ShipState,
     info = {}
     planet_x = jnp.array([60.0, 120.0, 200.0])
     planet_y = jnp.array([120.0, 200.0, 80.0])
-    planet_r = jnp.array([15.0, 15.0, 15.0])
+    planet_r = jnp.array([3, 3, 3])
     level_ids = jnp.array([0, 1, 2])
     dx = planet_x - new_state.x
     dy = planet_y - new_state.y
@@ -1146,7 +1172,7 @@ def step_core_map(state: ShipState,
 
 # ========== Step Core Level Skeleton ==========
 @jax.jit
-def terrain_hit_mask(mask: jnp.ndarray, x: jnp.ndarray, y: jnp.ndarray, radius: float = 5.0) -> jnp.ndarray:
+def terrain_hit_mask(mask: jnp.ndarray, x: jnp.ndarray, y: jnp.ndarray, radius: float = 2) -> jnp.ndarray:
     H, W = mask.shape
     R_MAX = 8
     r = jnp.int32(jnp.clip(radius, 1.0, float(R_MAX)))
@@ -1177,7 +1203,7 @@ def step_map(env_state: EnvState, action: int):
     actual_action = jnp.where(was_crashing, NOOP, action)
     ship_after_move = ship_step(ship_state_before_move, actual_action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     can_fire = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (env_state.cooldown == 0) & (_bullets_alive_count(env_state.bullets) < 2)
-    bullets = jax.lax.cond(can_fire, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 5.0), lambda b: b, env_state.bullets)
+    bullets = jax.lax.cond(can_fire, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 2), lambda b: b, env_state.bullets)
     bullets = update_bullets(bullets)
     cooldown = jnp.where(can_fire, 5, jnp.maximum(env_state.cooldown - 1, 0))
     
@@ -1300,7 +1326,7 @@ def _step_level_core(env_state: EnvState, action: int):
         safe_y_max = jnp.float32(ground_y) - 20.0
         y0 = jnp.minimum(jnp.float32(HUD_HEIGHT + 48.0), safe_y_max)
         return env._replace(
-            ufo=UFOState(x=x0, y=y0, vx=-0.6, vy=0.0, hp=1, alive=True, death_timer=0),
+            ufo=UFOState(x=x0, y=y0, vx=-0.04, vy=0.0, hp=1, alive=True, death_timer=0),
             ufo_used=True, ufo_home_x=x0, ufo_home_y=y0,
             ufo_bullets=create_empty_bullets_16(),
         )
@@ -1310,7 +1336,7 @@ def _step_level_core(env_state: EnvState, action: int):
     # --- 2. State Update (Movement & Player Firing) ---
     ship_after_move = ship_step(state_after_spawn.state, action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     can_fire_player = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (state_after_spawn.cooldown == 0) & (_bullets_alive_count(state_after_spawn.bullets) < 2)
-    bullets = jax.lax.cond(can_fire_player, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 5.0), lambda b: b, state_after_spawn.bullets)
+    bullets = jax.lax.cond(can_fire_player, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 0.2), lambda b: b, state_after_spawn.bullets)
     cooldown = jnp.where(can_fire_player, 5, jnp.maximum(state_after_spawn.cooldown - 1, 0))
     
     # --- 3. Integrate UFO Logic ---
@@ -1359,8 +1385,8 @@ def _step_level_core(env_state: EnvState, action: int):
         dy = ship_after_move.y - ey_center
         dist = jnp.sqrt(dx ** 2 + dy ** 2)
         dist = jnp.where(dist < 1e-3, 1.0, dist)
-        vx = dx / dist * 2.0  # enemy_bullet_speed
-        vy = dy / dist * 2.0
+        vx = dx / dist * 0.4  # enemy_bullet_speed
+        vy = dy / dist * 0.4
         x_out = jnp.where(should_fire_mask, ex_center, -1.0)
         y_out = jnp.where(should_fire_mask, ey_center, -1.0)
         vx_out = jnp.where(should_fire_mask, vx, 0.0)
@@ -1399,7 +1425,7 @@ def _step_level_core(env_state: EnvState, action: int):
         
     enemy_bullets, hit_by_enemy_bullet = consume_ship_hits(ship_after_move, enemy_bullets, SHIP_RADIUS)
     ufo_bullets, hit_by_ufo_bullet = consume_ship_hits(ship_after_move, ufo_bullets, SHIP_RADIUS)
-    hit_terr = terrain_hit(state_after_ufo, ship_after_move.x, ship_after_move.y, 8.0)
+    hit_terr = terrain_hit(state_after_ufo, ship_after_move.x, ship_after_move.y, 2)
         
     # --- 7. State Finalization ---
     # a) Initial check for ship death
@@ -1556,7 +1582,7 @@ def step_core_level(env_state: EnvState,
 
 
     # Player bullet collision with terrain
-    player_bullet_radius = 2.0              # Adjustable bullet collision radius
+    player_bullet_radius = 0.4              # Adjustable bullet collision radius
     # Only check for live bullets
     bullets_to_check_mask = bullets.alive
     # Use the batched collision detection function for the bullets' coordinates
@@ -1617,7 +1643,7 @@ def step_core_level(env_state: EnvState,
     enemy_bullets = truncate_bullets(enemy_bullets, max_len=16)
 
     # Enemy bullet collision with terrain
-    enemy_bullet_radius = 2.0
+    enemy_bullet_radius = 0.4
     enemies_to_check_mask = enemy_bullets.alive
     hit_terrain_mask_enemy = batched_terrain_hit(env_state, enemy_bullets.x, enemy_bullets.y, enemy_bullet_radius)
     new_enemy_bullets_alive = enemy_bullets.alive & ~hit_terrain_mask_enemy
@@ -1654,8 +1680,8 @@ def step_core_level(env_state: EnvState,
     # 5. Update the ship's death status
     # old crash condition OR new collision with turret condition
     crashed = crashed_on_turret 
-    hit_by_bullet = check_ship_hit(state, enemy_bullets, hitbox_size=10.0)
-    hit_terr = terrain_hit(env_state, state.x, state.y, jnp.float32(8.0))
+    hit_by_bullet = check_ship_hit(state, enemy_bullets, hitbox_size=2)
+    hit_terr = terrain_hit(env_state, state.x, state.y, jnp.float32(2.0))
     dead = crashed | hit_by_bullet | hit_terr
 
     # 6. Make all hit enemies "disappear" (width and height become 0)
@@ -1772,7 +1798,7 @@ def step_arena(env_state: EnvState, action: int):
     ship_after_move = ship_step(ship, actual_action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     
     can_fire = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (env_state.cooldown == 0) & (_bullets_alive_count(env_state.bullets) < 2)
-    bullets = jax.lax.cond(can_fire, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 5.0), lambda b: b, env_state.bullets)
+    bullets = jax.lax.cond(can_fire, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 2.0), lambda b: b, env_state.bullets)
     bullets = update_bullets(bullets)
     cooldown = jnp.where(can_fire, 5, jnp.maximum(env_state.cooldown - 1, 0))
 
@@ -1919,7 +1945,7 @@ def _update_ufo(env: EnvState, ship: ShipState, bullets: Bullets) -> EnvState:
         cd_ok = (e.mode_timer % FIRE_COOLDOWN) == 0
         can_shoot = u_final.alive & no_ufo_bullet_alive & cd_ok
         def _fire_one(bul):
-            return _fire_single_from_to(bul, u_final.x, u_final.y, ship.x, ship.y, 2.2)
+            return _fire_single_from_to(bul, u_final.x, u_final.y, ship.x, ship.y, 0.4)
         ufo_bullets = jax.lax.cond(can_shoot, _fire_one, lambda b: b, e.ufo_bullets)
         
         # 5. Return the complete environment state
@@ -1957,34 +1983,8 @@ def get_action_from_key():
     fire = keys[pygame.K_SPACE]
     down = keys[pygame.K_DOWN]
 
-    # Map action combinations  
-    if fire:
-        return 1
-    elif thrust:
-        return 2
-    elif rotate_right:
-        return 3  # RIGHT
-    elif rotate_left:
-        return 4  # LEFT
-    elif down:
-        return 5  # DOWN
-    elif thrust and rotate_right:
-        return 6  # UPRIGHT
-    elif thrust and rotate_left:
-        return 7
-    elif down and rotate_right:
-        return 8  # DOWNRIGHT
-    elif down and rotate_left:
-        return 9  # DOWNLEFT
-    elif thrust and fire:
-        return 10  # UPFIRE
-    elif rotate_right and fire:
-        return 11  # RIGHTFIRE
-    elif rotate_left and fire:
-        return 12  # LEFTFIRE
-    elif down and fire:
-        return 13  # DOWNFIRE
-    elif thrust and rotate_right and fire:
+    # First, check the most complex combinations (3 keys)
+    if thrust and rotate_right and fire:
         return 14  # UPRIGHTFIRE
     elif thrust and rotate_left and fire:
         return 15  # UPLEFTFIRE
@@ -1993,7 +1993,37 @@ def get_action_from_key():
     elif down and rotate_left and fire:
         return 17  # DOWNLEFTFIRE
 
-    # default return to action 0  
+    # Then, check for combinations of 2 keys
+    elif thrust and fire:
+        return 10  # UPFIRE
+    elif rotate_right and fire:
+        return 11  # RIGHTFIRE
+    elif rotate_left and fire:
+        return 12  # LEFTFIRE
+    elif down and fire:
+        return 13  # DOWNFIRE
+    elif thrust and rotate_right:
+        return 6   # UPRIGHT
+    elif thrust and rotate_left:
+        return 7   # UPLEFT
+    elif down and rotate_right:
+        return 8   # DOWNRIGHT
+    elif down and rotate_left:
+        return 9   # DOWNLEFT
+
+    # Finally, check for single keys
+    elif fire:
+        return 1   # FIRE
+    elif thrust:
+        return 2   # UP
+    elif rotate_right:
+        return 3   # RIGHT
+    elif rotate_left:
+        return 4   # LEFT
+    elif down:
+        return 5   # DOWN
+
+    # If no key is pressed, return NOOP (No Operation)
     return 0
 
 
@@ -2024,7 +2054,7 @@ class JaxGravitar(JaxEnvironment):
             vx=jnp.zeros((0,)), vy=jnp.zeros((0,)),
             alive=jnp.zeros((0,), dtype=bool)
         )
-        self.bullets_speed = 5.0
+        self.bullets_speed = 0.2
 
         self.enemy_bullets = Bullets(
             x=jnp.zeros((0,)), y=jnp.zeros((0,)),
@@ -2033,7 +2063,7 @@ class JaxGravitar(JaxEnvironment):
         )
         self.enemy_fire_cooldown = 0
         self.enemy_fire_interval = 60
-        self.enemy_bullet_speed = 5.0
+        self.enemy_bullet_speed = 0.2
 
         self.cooldown = 0
         self.cooldown_max = 5
@@ -2068,10 +2098,10 @@ class JaxGravitar(JaxEnvironment):
             spr = self.sprites[idx]
 
             if spr is not None:
-                r = 0.5 * max(spr.get_width(), spr.get_height()) * MAP_SCALE * HITBOX_SCALE
+                r = 0.1 * max(spr.get_width(), spr.get_height()) * MAP_SCALE * HITBOX_SCALE
 
             else:
-                r = 24.0
+                r = 4
 
             px.append(cx); py.append(cy); pr.append(r); pi.append(int(idx))
 
@@ -2566,8 +2596,8 @@ class JaxGravitar(JaxEnvironment):
         ship_state = ShipState(
             x=jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32),
             y=jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2, dtype=jnp.float32),
-            vx=jnp.array(jnp.cos(-jnp.pi / 4) * 1.5, dtype=jnp.float32), # Speed of 1.5
-            vy=jnp.array(jnp.sin(-jnp.pi / 4) * 1.5, dtype=jnp.float32),
+            vx=jnp.array(jnp.cos(-jnp.pi / 4) * 0.3, dtype=jnp.float32), # Speed of 1.5
+            vy=jnp.array(jnp.sin(-jnp.pi / 4) * 0.3, dtype=jnp.float32),
             angle=jnp.array(-jnp.pi / 2, dtype=jnp.float32)
         )
         
@@ -2607,7 +2637,7 @@ class JaxGravitar(JaxEnvironment):
             reactor_dest_active=jnp.array(False),
             reactor_dest_x=jnp.float32(0.0),
             reactor_dest_y=jnp.float32(0.0),
-            reactor_dest_radius=jnp.float32(8.0), 
+            reactor_dest_radius=jnp.float32(0.4), 
             mode_timer=jnp.int32(0),
             saucer=make_default_saucer(),
             saucer_spawn_timer=jnp.int32(SAUCER_SPAWN_DELAY_FRAMES),
@@ -2720,7 +2750,7 @@ class JaxGravitar(JaxEnvironment):
             reactor_dest_active=jnp.array(level_id_int == 4),
             reactor_dest_x=jnp.float32(0.0),
             reactor_dest_y=jnp.float32(0.0),
-            reactor_dest_radius=jnp.float32(8.0),
+            reactor_dest_radius=jnp.float32(0.4),
             mode_timer=jnp.int32(0),
 
             saucer=make_default_saucer(),
@@ -2966,7 +2996,7 @@ class GravitarRenderer(JAXGameRenderer):
         ship_state = state.state
         is_crashing = state.crash_timer > 0
         velocity_sq = ship_state.vx**2 + ship_state.vy**2
-        is_thrusting = velocity_sq > 0.05
+        is_thrusting = velocity_sq > 0.01
         
         ship_sprite_data = jax.lax.select(is_crashing, self.padded_ship_crash,
                                         jax.lax.select(is_thrusting, self.padded_ship_thrust, self.padded_ship_idle))

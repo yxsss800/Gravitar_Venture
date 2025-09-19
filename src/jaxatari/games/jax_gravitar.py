@@ -160,7 +160,6 @@ TERRANT_SCALE_OVERRIDES = {
 
 
 LEVEL_LAYOUTS = {
-    # 坐标现在是比例值 (x_ratio, y_ratio)
     # Level 0 (Planet 1)
     0: [
         {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.23, 0.52), 'flip_y': False},
@@ -198,12 +197,10 @@ LEVEL_LAYOUTS = {
 }
 
 LEVEL_OFFSETS = {
-    # 给所有星球的地形增加一个 30 像素的垂直下移
     0: (0, 30),
     1: (0, 30),
     2: (0, 30),
     3: (0, 30),
-    # 反应堆关卡不需要移动
     4: (0, 0),
 }
 
@@ -584,16 +581,13 @@ def create_env_state(rng: jnp.ndarray) -> EnvState:
 
 @jax.jit
 def make_level_start_state(level_id: int) -> ShipState:
-    # 为 160x210 屏幕设置一个安全的、靠上的出生 Y 坐标
     START_Y = jnp.float32(30.0)
     
     x = jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32)
     y = jnp.array(START_Y, dtype=jnp.float32)
     
-    # 飞船初始角度指向下方
     angle = jnp.array(jnp.pi / 2, dtype=jnp.float32)
     
-    # 反应堆关卡 (level 4) 的出生点稍微靠左
     is_reactor = (jnp.asarray(level_id, dtype=jnp.int32) == 4)
     x = jnp.where(is_reactor, x - 60.0, x)
     
@@ -838,15 +832,12 @@ def terrain_hit(env_state: EnvState, x: jnp.ndarray, y: jnp.ndarray, radius=jnp.
     bi = jnp.clip(env_state.terrain_bank_idx, 0, env_state.terrain_bank.shape[0] - 1)
     page = env_state.terrain_bank[bi]
     
-    # patch 现在是彩色的，形状是 (区域高度, 区域宽度, 3)
     patch = page[ys[:, None], xs[None, :]]
     
     dxf, dyf = dx.astype(jnp.float32), dy.astype(jnp.float32)
     dist2 = dyf[:, None]**2 + dxf[None, :]**2
     r_eff = jnp.minimum(jnp.float32(radius), jnp.float32(RMAX))
     mask = dist2 <= (r_eff**2)
-
-    # 关键改动：检查 patch 中像素的颜色值之和是否大于0 (即不是纯黑色)
     is_not_black = jnp.sum(patch, axis=-1) > 0
     
     return jnp.any(is_not_black & mask)
@@ -1861,30 +1852,21 @@ def step_arena(env_state: EnvState, action: int):
 
 @jax.jit
 def _bullets_hit_terrain(env_state: EnvState, bullets: Bullets) -> Bullets:
-    # 这是一个更健壮、对JIT更友好的版本
+
     H, W = env_state.terrain_bank.shape[1], env_state.terrain_bank.shape[2]
     
-    # 1. 获取当前关卡的地形颜色图
     bank_idx = jnp.clip(env_state.terrain_bank_idx, 0, env_state.terrain_bank.shape[0] - 1)
     terrain_map = env_state.terrain_bank[bank_idx]
 
-    # 2. 计算所有子弹的整数坐标，并确保它们在屏幕范围内
-    # 注意：我们不再需要应用level_offset，因为terrain_map已经是全屏的了
     xi = jnp.clip(jnp.round(bullets.x).astype(jnp.int32), 0, W - 1)
     yi = jnp.clip(jnp.round(bullets.y).astype(jnp.int32), 0, H - 1)
 
-    # 3. 使用高级索引一次性获取所有子弹位置的像素颜色
-    # terrain_map[yi, xi] 会返回一个 (MAX_BULLETS, 3) 的数组
     pixel_colors = terrain_map[yi, xi]
 
-    # 4. 检查像素颜色是否为“地形”（即非纯黑）
-    # jnp.sum > 0 是一个高效的检查方法
     hit_terrain_mask = jnp.sum(pixel_colors, axis=-1) > 0
 
-    # 5. 只有“存活的”子弹才可能撞到地形
     final_hit_mask = bullets.alive & hit_terrain_mask
 
-    # 6. 返回新的子弹状态，撞到地形的子弹alive设为False
     return bullets._replace(alive=bullets.alive & ~final_hit_mask)
 
 def _update_ufo(env: EnvState, ship: ShipState, bullets: Bullets) -> EnvState:

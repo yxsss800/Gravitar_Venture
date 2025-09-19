@@ -24,6 +24,7 @@ import jax.debug
     Group member of the Gravitar: Xusong Yin, Elizaveta Kuznetsova, Li Dai
 """
 FORCE_SPRITES = True
+WORLD_SCALE = 3.0
 # ========== Constants ==========
 SPRITE_DIR = os.path.join(os.path.dirname(__file__), "sprites", "gravitar")
 SCALE = 1
@@ -50,7 +51,7 @@ DOWNRIGHTFIRE = 16
 DOWNLEFTFIRE = 17
 
 # HUD settings
-HUD_HEIGHT = 72
+HUD_HEIGHT = 24
 MAX_LIVES = 6
 HUD_PADDING = 5
 HUD_SHIP_WIDTH = 10
@@ -62,23 +63,29 @@ WINDOW_HEIGHT = 210
 
 SAUCER_SPAWN_DELAY_FRAMES = 60 *3
 SAUCER_RESPAWN_DELAY_FRAMES = 180 * 3
-SAUCER_SPEED_MAP = jnp.float32(0.2)
-SAUCER_SPEED_ARENA = jnp.float32(0.2)
-SAUCER_RADIUS = jnp.float32(0.3)
-SHIP_RADIUS   = jnp.float32(0.2)
+SAUCER_SPEED_MAP = jnp.float32(0.4) / WORLD_SCALE
+SAUCER_SPEED_ARENA = jnp.float32(0.4) / WORLD_SCALE
+SAUCER_RADIUS = jnp.float32(3.0)
+SHIP_RADIUS   = jnp.float32(2.0)
 SAUCER_INIT_HP = jnp.int32(1)
 
-SAUCER_SCALE              = 2.2
-ENEMY_ORANGE_SCALE = 2.5
-ENEMY_GREEN_SCALE = 2.5
-FUEL_TANK_SCALE = 2.5
-UFO_SCALE = 2.5    
+#SAUCER_SCALE              = 2.2
+#ENEMY_ORANGE_SCALE = 2.5
+#ENEMY_GREEN_SCALE = 2.5
+#FUEL_TANK_SCALE = 2.5
+#UFO_SCALE = 2.5    
 
+PLAYER_BULLET_SPEED = jnp.float32(4) / WORLD_SCALE
 SAUCER_EXPLOSION_FRAMES = jnp.int32(60) 
 SAUCER_FIRE_INTERVAL_FRAMES = jnp.int32(24)  
-SAUCER_BULLET_SPEED         = jnp.float32(0.4)
+SAUCER_BULLET_SPEED = jnp.float32(2) / WORLD_SCALE
 ENEMY_EXPLOSION_FRAMES = jnp.int32(60) 
-UFO_HIT_RADIUS = jnp.float32(0.3) 
+UFO_HIT_RADIUS = jnp.float32(3.0) 
+
+SHIP_ANCHOR_X = None
+SHIP_ANCHOR_Y = None
+DEBUG_DRAW_SHIP_ORIGIN = True
+PLAYER_FIRE_COOLDOWN_FRAMES = 30
 
 def _jax_rotate(image, angle_deg, reshape=False, order=1, mode='constant', cval=0):
     angle_rad = jnp.deg2rad(angle_deg)
@@ -153,7 +160,8 @@ class SpriteIdx(IntEnum):
     DIGIT_7 = 36
     DIGIT_8 = 37
     DIGIT_9 = 38
-
+    ENEMY_ORANGE_FLIPPED = 39
+    
 TERRANT_SCALE_OVERRIDES = {
     SpriteIdx.TERRANT2: 0.80,  
 }
@@ -162,35 +170,35 @@ TERRANT_SCALE_OVERRIDES = {
 LEVEL_LAYOUTS = {
     # Level 0 (Planet 1)
     0: [
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.23, 0.52), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.51, 0.46), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.94, 0.30), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_GREEN,  'pos_ratio': (0.13, 0.66), 'flip_y': False},
-        {'type': SpriteIdx.FUEL_TANK,    'pos_ratio': (0.65, 0.60), 'flip_y': False},
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (37, 44)}, #158
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (82, 32)}, #146     114
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (152, -3)},  #112
+        {'type': SpriteIdx.ENEMY_GREEN,  'coords': (22, 71)},
+        {'type': SpriteIdx.FUEL_TANK,    'coords': (104, 60)}, #174 114
     ],
     # Level 1 (Planet 2)
     1: [
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.87, 0.39), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.52, 0.76), 'flip_y': True},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.16, 0.50), 'flip_y': True},
-        {'type': SpriteIdx.ENEMY_GREEN,  'pos_ratio': (0.20, 0.65), 'flip_y': False},
-        {'type': SpriteIdx.FUEL_TANK,    'pos_ratio': (0.34, 0.26), 'flip_y': False},
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (93, 19)},
+        {'type': SpriteIdx.ENEMY_ORANGE_FLIPPED, 'coords': (52, 77)},
+        {'type': SpriteIdx.ENEMY_ORANGE_FLIPPED, 'coords': (8, 36)},
+        {'type': SpriteIdx.ENEMY_GREEN,  'coords': (11, 60)},
+        {'type': SpriteIdx.FUEL_TANK,    'coords': (29, 0)},
     ],
     # Level 2 (Planet 3)
     2: [
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.15, 0.47), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_GREEN,  'pos_ratio': (0.27, 0.68), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.37, 0.28), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_GREEN,  'pos_ratio': (0.67, 0.40), 'flip_y': False},
-        {'type': SpriteIdx.FUEL_TANK,    'pos_ratio': (0.84, 0.61), 'flip_y': False},
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (24, 38)},
+        {'type': SpriteIdx.ENEMY_GREEN,  'coords': (43, 82)},
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (60, -2)},
+        {'type': SpriteIdx.ENEMY_GREEN,  'coords': (108, 22)},
+        {'type': SpriteIdx.FUEL_TANK,    'coords': (135, 68)},
     ],
     # Level 3 (Planet 4)
     3: [
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.55, 0.33), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.72, 0.25), 'flip_y': True},
-        {'type': SpriteIdx.ENEMY_ORANGE, 'pos_ratio': (0.76, 0.74), 'flip_y': False},
-        {'type': SpriteIdx.ENEMY_GREEN,  'pos_ratio': (0.47, 0.48), 'flip_y': False},
-        {'type': SpriteIdx.FUEL_TANK,    'pos_ratio': (0.12, 0.65), 'flip_y': False},
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (88, 93-114+48)},
+        {'type': SpriteIdx.ENEMY_ORANGE_FLIPPED, 'coords': (116, 73-114+51)},
+        {'type': SpriteIdx.ENEMY_ORANGE, 'coords': (122, 180-114+47)},
+        {'type': SpriteIdx.ENEMY_GREEN,  'coords': (76, 126-114+47)},
+        {'type': SpriteIdx.FUEL_TANK,    'coords': (19, 162-114+47)},
     ],
     # Level 4 (Reactor)
     4: [],
@@ -247,7 +255,6 @@ class Enemies(NamedTuple):
     h: jnp.ndarray
     vx: jnp.ndarray
     sprite_idx: jnp.ndarray
-    flip_y: jnp.ndarray
     death_timer: jnp.ndarray
     hp: jnp.ndarray
 
@@ -280,6 +287,15 @@ class UFOState(NamedTuple):
     alive: jnp.ndarray  # bool
     death_timer: jnp.ndarray  
 
+# ========== FuelTanks State ==========
+class FuelTanks(NamedTuple):
+    x: jnp.ndarray          # (MAX_ENEMIES,)
+    y: jnp.ndarray
+    w: jnp.ndarray
+    h: jnp.ndarray
+    sprite_idx: jnp.ndarray
+    active: jnp.ndarray     # A boolean array to indicate if it's still active
+
 # ========== Env State ==========
 class EnvState(NamedTuple):
     mode: jnp.ndarray
@@ -287,6 +303,7 @@ class EnvState(NamedTuple):
     bullets: Bullets
     cooldown: jnp.ndarray
     enemies: Enemies
+    fuel_tanks: FuelTanks
     enemy_bullets: Bullets
     fire_cooldown: jnp.ndarray
     key: jnp.ndarray
@@ -427,7 +444,7 @@ def _opt(name_wo_ext: str):
 def _load_and_convert_sprites():
     pygame.init()
     pygame.display.set_mode((1, 1), pygame.NOFRAME)
-    pygame_sprites = load_sprites_tuple()
+    pygame_sprites = load_sprites_tuple() # This returns a tuple containing all sprite Surfaces
 
     def surface_to_jax(surf):
         if surf is None: return None
@@ -436,77 +453,80 @@ def _load_and_convert_sprites():
         return jnp.concatenate([rgb, alpha[..., None]], axis=-1).astype(jnp.uint8)
 
     jax_sprites = {}
-    sprite_keys_to_convert = [
-        SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN, SpriteIdx.FUEL_TANK, SpriteIdx.ENEMY_UFO,
-        SpriteIdx.SHIP_IDLE, SpriteIdx.SHIP_THRUST, SpriteIdx.SHIP_THRUST_BACK, SpriteIdx.SHIP_CRASH,
-        SpriteIdx.SHIP_BULLET, SpriteIdx.ENEMY_BULLET,
-        SpriteIdx.DIGIT_0, SpriteIdx.DIGIT_1, SpriteIdx.DIGIT_2, SpriteIdx.DIGIT_3, SpriteIdx.DIGIT_4,
-        SpriteIdx.DIGIT_5, SpriteIdx.DIGIT_6, SpriteIdx.DIGIT_7, SpriteIdx.DIGIT_8, SpriteIdx.DIGIT_9,
-        SpriteIdx.HP_UI,
-        SpriteIdx.PLANET1, SpriteIdx.PLANET2, SpriteIdx.PLANET3, SpriteIdx.PLANET4,
-        SpriteIdx.REACTOR,
-        SpriteIdx.SPAWN_LOC, 
-        SpriteIdx.OBSTACLE,
-        SpriteIdx.ENEMY_SAUCER,
-    ]
-    for key in sprite_keys_to_convert:
-        if pygame_sprites[key] is not None:
-            jax_sprites[int(key)] = surface_to_jax(pygame_sprites[key])
+    
+    # returned by load_sprites_tuple.
+    # enumerate provides both the index (i) and the content (surf).
+    for i, surf in enumerate(pygame_sprites):
+        # We convert the Pygame Surface as long as it's not None
+        if surf is not None:
+            # The index 'i' naturally corresponds to the integer value of the SpriteIdx
+            jax_sprites[i] = surface_to_jax(surf)
             
     return jax_sprites
 
 def load_sprites_tuple() -> tuple:
-    names = [
-        "spaceship",            # 0  SHIP_IDLE
-        "ship_thrust",          # 1  SHIP_THRUST
-        "ship_bullet",          # 2  SHIP_BULLET 
-        "enemy_bullet",         # 3  ENEMY_BULLET
-        "enemy_green_bullet",   # 4  ENEMY_GREEN_BULLET
+    # 1. Create a list large enough to hold all sprites, filled with None
+    #    This ensures the index corresponds perfectly with the SpriteIdx value.
+    num_sprites = max(int(e) for e in SpriteIdx) + 1
+    sprites = [None] * num_sprites
 
-        "enemy_orange",         # 5  ENEMY_ORANGE
-        "enemy_green",          # 6  ENEMY_GREEN
-        "saucer",               # 7  ENEMY_SAUCER
-        "UFO",                  # 8  ENEMY_UFO
+    # 2. Define a dictionary to map SpriteIdx enums to their .npy filenames (without extension).
+    #    This is the central place for managing all sprites. Adding a new one just requires one new line here.
+    sprite_map = {
+        SpriteIdx.SHIP_IDLE: "spaceship",
+        SpriteIdx.SHIP_THRUST: "ship_thrust",
+        SpriteIdx.SHIP_BULLET: "ship_bullet",
+        SpriteIdx.ENEMY_BULLET: "enemy_bullet",
+        SpriteIdx.ENEMY_GREEN_BULLET: "enemy_green_bullet",
+        SpriteIdx.ENEMY_ORANGE: "enemy_orange",
+        SpriteIdx.ENEMY_ORANGE_FLIPPED: "enemy_orange_flipped",
+        SpriteIdx.ENEMY_GREEN: "enemy_green",
+        SpriteIdx.ENEMY_SAUCER: "saucer",
+        SpriteIdx.ENEMY_UFO: "UFO",
+        SpriteIdx.ENEMY_CRASH: "enemy_crash",
+        SpriteIdx.SAUCER_CRASH: "saucer_crash",
+        SpriteIdx.SHIP_CRASH: "ship_crash",
+        SpriteIdx.FUEL_TANK: "fuel_tank",
+        SpriteIdx.OBSTACLE: "obstacle",
+        SpriteIdx.SPAWN_LOC: "spawn_location",
+        SpriteIdx.REACTOR: "reactor",
+        SpriteIdx.REACTOR_TERR: "reactor_terrant",
+        SpriteIdx.TERRANT1: "terrant1",
+        SpriteIdx.TERRANT2: "terrant2",
+        SpriteIdx.TERRANT3: "terrant_3",
+        SpriteIdx.TERRANT4: "terrant_4",
+        SpriteIdx.PLANET1: "planet1",
+        SpriteIdx.PLANET2: "planet2",
+        SpriteIdx.PLANET3: "planet3",
+        SpriteIdx.PLANET4: "planet4",
+        SpriteIdx.REACTOR_DEST: "reactor_destination",
+        SpriteIdx.SCORE_UI: "score",
+        SpriteIdx.HP_UI: "HP",
+        SpriteIdx.SHIP_THRUST_BACK: "ship_thrust_back",
+        SpriteIdx.DIGIT_0: "score_0",
+        SpriteIdx.DIGIT_1: "score_1",
+        SpriteIdx.DIGIT_2: "score_2",
+        SpriteIdx.DIGIT_3: "score_3",
+        SpriteIdx.DIGIT_4: "score_4",
+        SpriteIdx.DIGIT_5: "score_5",
+        SpriteIdx.DIGIT_6: "score_6",
+        SpriteIdx.DIGIT_7: "score_7",
+        SpriteIdx.DIGIT_8: "score_8",
+        SpriteIdx.DIGIT_9: "score_9",
+    }
 
-        "enemy_crash",          # 9  ENEMY_CRASH
-        "saucer_crash",         # 10 SAUCER_CRASH
-        "ship_crash",           # 11 SHIP_CRASH
+    # 3. Iterate through the map dictionary, calling _opt to load all base sprites.
+    for idx_enum, name in sprite_map.items():
+        sprites[int(idx_enum)] = _opt(name)
 
-        "fuel_tank",            # 12 FUEL_TANK
-        "obstacle",             # 13 OBSTACLE
-        "spawn_location",       # 14 SPAWN_LOC
+    # 4. Manually create flipped versions of sprites in memory.
+    orange_surf = sprites[int(SpriteIdx.ENEMY_ORANGE)]
+    if orange_surf:
+        # Use pygame.transform.flip for vertical flipping (arg2=False for horizontal, arg3=True for vertical)
+        sprites[int(SpriteIdx.ENEMY_ORANGE_FLIPPED)] = pygame.transform.flip(orange_surf, False, True)
 
-        "reactor",              # 15 REACTOR
-        "reactor_terrant",      # 16 REACTOR_TERR
-        "terrant1",             # 17 TERRANT1
-        "terrant2",             # 18 TERRANT2
-        "terrant_3",            # 19 TERRANT3
-        "terrant_4",            # 20 TERRANT4
-
-        "planet1",              # 21 PLANET1
-        "planet2",              # 22 PLANET2
-        "planet3",              # 23 PLANET3
-        "planet4",              # 24 PLANET4
-
-        "reactor_destination",  # 25 REACTOR_DEST
-        "score",                # 26 SCORE_UI
-        "HP",                   # 27 HP_UI
-
-        "ship_thrust_back",     # 28  SHIP_THRUST_BACK
-    ]
-    base = [_opt(n) for n in names]
-
-    # ------- Digits (0..9): strictly use score_0 ... score_9 -------
-    digits = []
-    for d in range(10):
-        spr = _opt(f"score_{d}")
-        if spr is None:
-            surf = pygame.Surface((8, 12), pygame.SRCALPHA)
-            digits.append(surf)
-        else:
-            digits.append(spr)
-
-    return tuple(base + digits)
+    # 5. Convert the final list to a tuple and return.
+    return tuple(sprites)
 
 # Initializes an empty bullet pool
 def create_empty_bullets_fixed(size: int) -> Bullets:
@@ -536,7 +556,6 @@ def create_empty_enemies():
         h=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
         vx=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
         sprite_idx=jnp.full((MAX_ENEMIES,), -1, dtype=jnp.int32),
-        flip_y=jnp.zeros((MAX_ENEMIES,), dtype=bool),
         death_timer=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
         hp=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32)
     )
@@ -567,7 +586,7 @@ def create_env_state(rng: jnp.ndarray) -> EnvState:
         reactor_dest_active=jnp.array(False), 
         reactor_dest_x=jnp.float32(0.0),
         reactor_dest_y=jnp.float32(0.0),
-        reactor_dest_radius=jnp.float32(0.25), 
+        reactor_dest_radius=jnp.float32(0.4), 
         saucer=make_default_saucer(),
         saucer_spawn_timer=jnp.int32(SAUCER_SPAWN_DELAY_FRAMES),
         map_return_x=jnp.float32(0.0),
@@ -586,7 +605,7 @@ def make_level_start_state(level_id: int) -> ShipState:
     x = jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32)
     y = jnp.array(START_Y, dtype=jnp.float32)
     
-    angle = jnp.array(jnp.pi / 2, dtype=jnp.float32)
+    angle = jnp.array(-jnp.pi / 2, dtype=jnp.float32)
     
     is_reactor = (jnp.asarray(level_id, dtype=jnp.int32) == 4)
     x = jnp.where(is_reactor, x - 60.0, x)
@@ -623,6 +642,7 @@ def merge_bullets(prev: Bullets, add: Bullets, max_len: int | None = None) -> Bu
     prev0 = _enforce_cap_keep_old(prev, cap_i)  
     used = jnp.minimum(_bullets_alive_count(prev0), cap_i)
     space_left0 = cap_i - used
+
     def place_one(carry, i):
         b, space_left = carry
         take = add.alive[i] & (space_left > 0)
@@ -630,8 +650,10 @@ def merge_bullets(prev: Bullets, add: Bullets, max_len: int | None = None) -> Bu
         # Find the first available empty slot
         dead_mask = ~b.alive
         has_slot  = jnp.any(dead_mask)
+
         take      = take & has_slot
         idx       = jnp.argmax(dead_mask.astype(jnp.int32))
+
         b2 = jax.lax.cond(
             take,
             lambda _: Bullets(
@@ -645,16 +667,20 @@ def merge_bullets(prev: Bullets, add: Bullets, max_len: int | None = None) -> Bu
             operand=None
         )
         space2 = jnp.where(take, space_left - 1, space_left)
+
         return (b2, space2), None
+    
     n_add = add.x.shape[0]   # Static length
     (merged, _), _ = jax.lax.scan(place_one, (prev0, space_left0), jnp.arange(n_add))
     
     # Re-enforce the cap to ensure the total number of alive bullets does not exceed the capacity
     merged = _enforce_cap_keep_old(merged, cap_i)
+
     return merged
 
 @jax.jit
 def _bullets_alive_count(bullets: Bullets):
+
     return jnp.asarray(jnp.sum(bullets.alive.astype(jnp.int32)), dtype=jnp.int32)
 
 @jax.jit
@@ -662,6 +688,7 @@ def _enforce_cap_keep_old(b: Bullets, cap: int) -> Bullets:
     cap_i = jnp.int32(cap)
     rank = jnp.cumsum(b.alive.astype(jnp.int32)) - 1  # Sequential number for each alive bullet (0,1,2,...)
     keep = b.alive & (rank < cap_i)
+
     return Bullets(x=b.x, y=b.y, vx=b.vx, vy=b.vy, alive=keep)
 
 # ========== Fire Bullet ==========
@@ -682,9 +709,11 @@ def fire_bullet(bullets: Bullets, ship_x, ship_y, ship_angle, bullet_speed):
         )
 
     def skip_bullet(_):
+
         return bullets
 
     can_fire = jnp.any(bullets.alive == False)
+
     return jax.lax.cond(can_fire, add_bullet, skip_bullet, operand=None)
 
 @jax.jit
@@ -694,6 +723,7 @@ def _fire_single_from_to(bullets: Bullets, sx, sy, tx, ty, speed=jnp.float32(0.7
     d = jnp.maximum(jnp.sqrt(dx*dx + dy*dy), 1e-3)
     vx = speed * dx / d
     vy = speed * dy / d
+
     one = Bullets(
         x=jnp.array([sx], dtype=jnp.float32),
         y=jnp.array([sy], dtype=jnp.float32),
@@ -701,6 +731,7 @@ def _fire_single_from_to(bullets: Bullets, sx, sy, tx, ty, speed=jnp.float32(0.7
         vy=jnp.array([vy], dtype=jnp.float32),
         alive=jnp.array([True])
     )
+
     return merge_bullets(bullets, one, max_len=16)
 
 # ========== Ship Collision Utilities ==========
@@ -746,6 +777,7 @@ def check_ship_enemy_collisions(ship: ShipState, enemies: Enemies, ship_radius: 
     # A collision occurs if the distance is less than the ship's radius
     # Also ensure the enemy is "alive" (width > 0)）
     collided_mask = (distance_sq < ship_radius**2) & (enemies.w > 0.0)
+
     return collided_mask
 
 @jax.jit
@@ -754,23 +786,29 @@ def check_ship_hit(state: ShipState, bullets: Bullets, hitbox_size: float) -> bo
     sx2 = state.x + hitbox_size
     sy1 = state.y - hitbox_size
     sy2 = state.y + hitbox_size
+
     within_x = (bullets.x >= sx1) & (bullets.x <= sx2)
     within_y = (bullets.y >= sy1) & (bullets.y <= sy2)
+
     return jnp.any(within_x & within_y & bullets.alive)
 
 @jax.jit
 def check_enemy_hit(bullets: Bullets, enemies: Enemies) -> Tuple[Bullets, Enemies]:
     #1. Perform all collision detection calculations first
-    padding = 0.1
+    padding = 0.2
     ex1 = enemies.x - enemies.w / 2 - padding
     ex2 = enemies.x + enemies.w / 2 + padding
     ey1 = enemies.y - enemies.h / 2 - padding
     ey2 = enemies.y + enemies.h / 2
+
     bx = bullets.x[:, None]
     by = bullets.y[:, None]
+
     cond_x = (bx >= ex1) & (bx <= ex2)
     cond_y = (by >= ey1) & (by <= ey2)
+
     hit_matrix = cond_x & cond_y & bullets.alive[:, None] & (enemies.w > 0)[:, None].T
+
     bullet_hit = jnp.any(hit_matrix, axis=1)
     enemy_hit = jnp.any(hit_matrix, axis=0)
     
@@ -807,7 +845,6 @@ def check_enemy_hit(bullets: Bullets, enemies: Enemies) -> Tuple[Bullets, Enemie
         h=enemies.h,
         vx=enemies.vx,
         sprite_idx=enemies.sprite_idx,
-        flip_y=enemies.flip_y, 
         death_timer=death_timer_after_hit,
         hp=hp_after_hit
     )
@@ -816,8 +853,7 @@ def check_enemy_hit(bullets: Bullets, enemies: Enemies) -> Tuple[Bullets, Enemie
 
 @jax.jit
 def terrain_hit(env_state: EnvState, x: jnp.ndarray, y: jnp.ndarray, radius=jnp.float32(0.3)) -> jnp.ndarray:
-    offset_x, offset_y = env_state.level_offset[0], env_state.level_offset[1]
-    adjusted_x, adjusted_y = x - offset_x, y - offset_y
+    adjusted_x, adjusted_y = x, y
     H, W = env_state.terrain_bank.shape[1], env_state.terrain_bank.shape[2]
     
     xi = jnp.clip(jnp.round(adjusted_x).astype(jnp.int32), 0, W - 1)
@@ -836,6 +872,7 @@ def terrain_hit(env_state: EnvState, x: jnp.ndarray, y: jnp.ndarray, radius=jnp.
     
     dxf, dyf = dx.astype(jnp.float32), dy.astype(jnp.float32)
     dist2 = dyf[:, None]**2 + dxf[None, :]**2
+    
     r_eff = jnp.minimum(jnp.float32(radius), jnp.float32(RMAX))
     mask = dist2 <= (r_eff**2)
     is_not_black = jnp.sum(patch, axis=-1) > 0
@@ -847,16 +884,20 @@ def consume_ship_hits(state, bullets, hitbox_size):
     # Ship's collision radius
     hs    = jnp.asarray(hitbox_size, dtype=jnp.float32)
     eff_r = hs + jnp.float32(0.04)
+
     hit_mask = bullets.alive & _segment_hits_circle(
         bullets.x, bullets.y, bullets.vx, bullets.vy,
         state.x,     state.y,   eff_r
     )
+
     any_hit = jnp.any(hit_mask)
+
     new_bullets = Bullets(
         x=bullets.x, y=bullets.y,
         vx=bullets.vx, vy=bullets.vy,
         alive=bullets.alive & (~hit_mask)    # Eliminate hit bullets
     )
+
     return new_bullets, any_hit
 
 @jax.jit
@@ -867,13 +908,18 @@ def kill_bullets_hit_terrain_segment(prev: Bullets, nxt: Bullets, terrain_mask: 
         t = jnp.float32(i) / jnp.float32(samples - 1)  # 0..1
         xs = prev.x + t * (nxt.x - prev.x)
         ys = prev.y + t * (nxt.y - prev.y)
+
         xi = jnp.clip(xs.astype(jnp.int32), 0, jnp.int32(W - 1))
         yi = jnp.clip(ys.astype(jnp.int32), 0, jnp.int32(H - 1))
+
         hit_i = terrain_mask[yi, xi] > 0
+        
         return acc_hit | hit_i
+    
     init = jnp.zeros_like(prev.alive, dtype=jnp.bool_)
     hits = jax.lax.fori_loop(0, samples, body, init)
     alive = nxt.alive & (~hits) & prev.alive  # Only active bullets are considered
+
     return Bullets(x=nxt.x, y=nxt.y, vx=nxt.vx, vy=nxt.vy, alive=alive)
 
 # ========== Ship Step ==========
@@ -883,42 +929,64 @@ def ship_step(state: ShipState,
               action: int,
               window_size: tuple[int, int],
               hud_height: int) -> ShipState:
-    rotation_speed = 0.03
-    thrust_power = 0.03
-    gravity = 0.01
-    
-    bounce_damping = 0.2  # Damping factor for bounce velocity
-    damping_factor = 0.99
-    max_speed = 0.6
+    # --- Physics Parameters ---
+    rotation_speed = 0.2 / WORLD_SCALE
+    thrust_power = 0.03 / WORLD_SCALE
+    gravity = 0.008 / WORLD_SCALE
+    max_speed = 1.0 / WORLD_SCALE
 
-    vx = state.vx * damping_factor
-    vy = state.vy * damping_factor
+    # 0.0 = full stop on collision (inelastic)
+    # 1.0 = perfect bounce (elastic)
+    # We start with a softer value, e.g., 0.5 (retains 50% energy)
+    bounce_damping = 0.5
 
+    # --- 1. Initialize velocity variables for this frame ---
+    #     we get the initial velocity from the state
+    vx = state.vx
+    vy = state.vy
+
+    # --- 2. Rotation Logic ---
     rotate_right_actions = jnp.array([3, 6, 8, 11, 14, 16])
     rotate_left_actions = jnp.array([4, 7, 9, 12, 15, 17])
-    thrust_actions = jnp.array([2, 6, 7, 10, 14, 15])
-    down_thrust_actions = jnp.array([5, 8, 9, 13, 16, 17])
     right = jnp.isin(action, rotate_right_actions)
     left = jnp.isin(action, rotate_left_actions)
-    thrust = jnp.isin(action, thrust_actions)
-    down_thrust = jnp.isin(action, down_thrust_actions)
+    
+    # In a Y-down coordinate system:
+    # Turn left (counter-clockwise) -> decrease angle value
+    angle = jnp.where(left, state.angle - rotation_speed, state.angle)
+    # Turn right (clockwise) -> increase angle value
+    angle = jnp.where(right, angle + rotation_speed, angle)
 
-    angle = jnp.where(right, state.angle + rotation_speed, state.angle)
-    angle = jnp.where(left, angle - rotation_speed, angle)
-
-    vx = jnp.where(thrust, state.vx + jnp.cos(angle) * thrust_power, state.vx)
-    vy = jnp.where(thrust, state.vy + jnp.sin(angle) * thrust_power, state.vy)
-    vx = jnp.where(down_thrust, vx - jnp.cos(angle) * thrust_power, vx)
-    vy = jnp.where(down_thrust, vy - jnp.sin(angle) * thrust_power, vy)
+    # --- 3. Thrust Calculation ---
+    thrust_actions = jnp.array([2, 6, 7, 10, 14, 15])
+    down_thrust_actions = jnp.array([5, 8, 9, 13, 16, 17])
+    
+    thrust_pressed = jnp.isin(action, thrust_actions)
+    down_pressed = jnp.isin(action, down_thrust_actions)
+    
+    # Forward thrust (vector addition), controlled by the UP key
+    vx = jnp.where(thrust_pressed, vx + jnp.cos(angle) * thrust_power, vx)
+    vy = jnp.where(thrust_pressed, vy + jnp.sin(angle) * thrust_power, vy)
+    
+    # Reverse thrust (vector subtraction), controlled by the DOWN key
+    vx = jnp.where(down_pressed, vx - jnp.cos(angle) * thrust_power, vx)
+    vy = jnp.where(down_pressed, vy - jnp.sin(angle) * thrust_power, vy)
+    
+    # Apply gravity
     vy += gravity
+
+    # --- 4. Apply maximum speed limit ---
     speed_sq = vx**2 + vy**2
+    
     def cap_velocity(v_tuple):
         v_x, v_y, spd_sq = v_tuple
         speed = jnp.sqrt(spd_sq)
         scale = max_speed / speed
+        
         return v_x * scale, v_y * scale
     
     def no_op(v_tuple):
+
         return v_tuple[0], v_tuple[1]
 
     vx, vy = jax.lax.cond(
@@ -928,36 +996,34 @@ def ship_step(state: ShipState,
         (vx, vy, speed_sq)
     )
 
-    next_x_unclipped = state.x + vx
-    next_y_unclipped = state.y + vy
-    ship_half_size = 2
+    # --- 5. Position and Boundary Collision ---
+    # a. Use the current frame's velocity to calculate the next frame's position
+    next_x = state.x + vx
+    next_y = state.y + vy
+    
+    ship_half_size = SHIP_RADIUS
     window_width, window_height = window_size
    
-    # --- Boundary collision and bounce logic ---
-    # Horizontal bounce
-    hit_left = next_x_unclipped < ship_half_size
-    hit_right = next_x_unclipped > window_width - ship_half_size
+    # b. Use the next frame's position to predict if a collision will occur
+    hit_left = next_x < ship_half_size
+    hit_right = next_x > window_width - ship_half_size
+
+    hit_top = next_y < hud_height + ship_half_size
+    hit_bottom = next_y > window_height - ship_half_size
+
+    # c. Based on the prediction, calculate the velocity for the *next* frame
+    final_vx = jnp.where(hit_left | hit_right, -vx * bounce_damping, vx)
+    final_vy = jnp.where(hit_top | hit_bottom, -vy * bounce_damping, vy)
     
-    # Store old vx and vy for bounce calculation
-    old_vx = vx
-    old_vy = vy
-    
-    # Apply bounce to velocities
-    vx = jnp.where(hit_left | hit_right, -old_vx * bounce_damping, old_vx)
-    
-    # Update position based on potentially bounced velocity, then clip
-    x = state.x + vx  # Use the (potentially bounced) new vx
-    x = jnp.clip(x, ship_half_size, window_width - ship_half_size)  # Clip to ensure it's precisely at the edge
-    
-    # Vertical bounce
-    hit_top = next_y_unclipped < hud_height + ship_half_size
-    hit_bottom = next_y_unclipped > window_height - ship_half_size
-    vy = jnp.where(hit_top | hit_bottom, -old_vy * bounce_damping, old_vy)
-    
-    # Update position based on potentially bounced velocity, then clip
-    y = state.y + vy  # Use the (potentially bounced) new vy
-    y = jnp.clip(y, hud_height + ship_half_size, window_height - ship_half_size)
-    return ShipState(x=x, y=y, vx=vx, vy=vy, angle=angle)
+    # d. Force the next frame's position to be within boundaries using clip
+    final_x = jnp.clip(next_x, ship_half_size, window_width - ship_half_size)
+    final_y = jnp.clip(next_y, hud_height + ship_half_size, window_height - ship_half_size)
+
+    # e. Normalize the angle (remains unchanged)
+    normalized_angle = (angle + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+   # f. Return the new state with corrected position and velocity
+    return ShipState(x=final_x, y=final_y, vx=final_vx, vy=final_vy, angle=normalized_angle)
 
 
 # ========== Logic about saucer ==========
@@ -965,19 +1031,25 @@ def ship_step(state: ShipState,
 def _get_reactor_center(px, py, pi) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     REACTOR = jnp.int32(int(SpriteIdx.REACTOR))
     mask = (pi == REACTOR)
+
     any_reactor = jnp.any(mask)
     idx = jnp.argmax(mask.astype(jnp.int32))
+
     rx = jax.lax.cond(any_reactor, lambda _: px[idx], lambda _: jnp.float32(WINDOW_WIDTH * 0.18), operand=None)
     ry = jax.lax.cond(any_reactor, lambda _: py[idx], lambda _: jnp.float32(WINDOW_HEIGHT* 0.43), operand=None)
+
     return rx, ry, any_reactor
 
 @jax.jit
 def _spawn_saucer_at(x, y, towards_x, towards_y, speed=jnp.float32(0.8)) -> SaucerState:
     dx = towards_x - x
     dy = towards_y - y
+
     d = jnp.maximum(jnp.sqrt(dx*dx + dy*dy), 1e-3)
+
     vx = speed * dx / d
     vy = speed * dy / d
+
     return SaucerState(
         x=jnp.float32(x), y=jnp.float32(y),
         vx=vx, vy=vy,
@@ -990,34 +1062,42 @@ def _update_saucer_seek(s: SaucerState, target_x, target_y, speed) -> SaucerStat
     dx = target_x - s.x
     dy = target_y - s.y
     d = jnp.maximum(jnp.sqrt(dx*dx + dy*dy), 1e-3)
+
     vx = speed * dx / d
     vy = speed * dy / d
+
     return s._replace(x=s.x + vx, y=s.y + vy, vx=vx, vy=vy)
 
 @jax.jit
-def _saucer_fire_one(
-    sauc: SaucerState,
-    ship_x: jnp.ndarray,
-    ship_y: jnp.ndarray,
-    prev_enemy_bullets: Bullets,
-    mode_timer: jnp.ndarray,
-) -> Bullets:
+def _saucer_fire_one(sauc: SaucerState,
+                     ship_x: jnp.ndarray,
+                     ship_y: jnp.ndarray,
+                     prev_enemy_bullets: Bullets,
+                     mode_timer: jnp.ndarray,
+                ) -> Bullets:
+    
     can_fire = sauc.alive & ((mode_timer % SAUCER_FIRE_INTERVAL_FRAMES) == 0) \
                & (_bullets_alive_count(prev_enemy_bullets) < jnp.int32(1))
+    
     def do_fire(_):
+
         merged = _fire_single_from_to(
             prev_enemy_bullets,
             sauc.x, sauc.y,
             ship_x, ship_y,
             SAUCER_BULLET_SPEED
         )
+
         return _enforce_cap_keep_old(merged, cap=1)
+    
     return jax.lax.cond(can_fire, do_fire, lambda _: prev_enemy_bullets, operand=None)
 
 @jax.jit
 def _circle_hit(ax, ay, ar, bx, by, br) -> jnp.ndarray:
+
     dx = ax - bx
     dy = ay - by
+
     return (dx*dx + dy*dy) <= (ar+br)*(ar+br)
 
 @jax.jit
@@ -1030,39 +1110,48 @@ def _segment_hits_circle(bx, by, vx, vy, cx, cy, r):
     # Find the point on the line segment with parameter t* ∈ [0,1] that is closest to the circle's center
     a   = dx*dx + dy*dy + 1e-6
     t   = jnp.clip(-(((px0 - cx)*dx + (py0 - cy)*dy) / a), 0.0, 1.0)
+
     qx  = px0 + t*dx
     qy  = py0 + t*dy
     d2  = (qx - cx)*(qx - cx) + (qy - cy)*(qy - cy)
+
     return d2 <= (r*r)
 
 @jax.jit
 def _bullets_hit_saucer(bullets: Bullets, sauc: SaucerState):
     eff_r = SAUCER_RADIUS
+
     hit_mask = bullets.alive & _segment_hits_circle(
         bullets.x, bullets.y, bullets.vx, bullets.vy,
         sauc.x,     sauc.y,     eff_r
     )
     any_hit = jnp.any(hit_mask)
+
     new_bullets = Bullets(
         x=bullets.x, y=bullets.y,
         vx=bullets.vx, vy=bullets.vy,
         alive=bullets.alive & (~hit_mask)    # Eliminate hit bullets
     )
+
     return new_bullets, any_hit
 
 @jax.jit
 def _bullets_hit_ufo(bullets: Bullets, ufo) -> Tuple[Bullets, jnp.ndarray]:
     eff_r = SAUCER_RADIUS
+
     hit_mask = bullets.alive & _segment_hits_circle(
         bullets.x, bullets.y, bullets.vx, bullets.vy,
         ufo.x,     ufo.y,     eff_r
     )
+
     any_hit = jnp.any(hit_mask)
+
     new_bullets = Bullets(
         x=bullets.x, y=bullets.y,
         vx=bullets.vx, vy=bullets.vy,
         alive=bullets.alive & (~hit_mask) 
     )
+
     return new_bullets, any_hit
 
 # ========== Enemy Step ==========
@@ -1072,9 +1161,11 @@ def enemy_step(enemies: Enemies, window_width: int) -> Enemies:
     x = enemies.x + enemies.vx
     left_hit = x <= 0
     right_hit = (x + enemies.w) >= window_width
+
     hit_edge = left_hit | right_hit
     vx = jnp.where(hit_edge, -enemies.vx, enemies.vx)
-    return Enemies(x=x, y=enemies.y, w=enemies.w, h=enemies.h, vx=vx, sprite_idx=enemies.sprite_idx, flip_y=enemies.flip_y, death_timer=enemies.death_timer, hp=enemies.hp)
+
+    return Enemies(x=x, y=enemies.y, w=enemies.w, h=enemies.h, vx=vx, sprite_idx=enemies.sprite_idx, death_timer=enemies.death_timer, hp=enemies.hp)
 
 
 # ========== Enemy Fire ==========
@@ -1089,10 +1180,13 @@ def enemy_fire(enemies: Enemies,
                ) -> tuple[Bullets, jnp.ndarray, jax.random.PRNGKey]:
     ex_center = enemies.x + enemies.w / 2
     ey_center = enemies.y - enemies.h / 2
+
     dx = ship_x - ex_center                 # shape=(N,)
     dy = ship_y - ey_center                 # shape=(N,)
+
     dist = jnp.sqrt(dx ** 2 + dy ** 2)
     dist = jnp.where(dist < 1e-3, 1.0, dist)
+
     vx = dx / dist * enemy_bullet_speed
     vy = dy / dist * enemy_bullet_speed
     
@@ -1106,8 +1200,10 @@ def enemy_fire(enemies: Enemies,
     new_fire_cooldown = jnp.where(should_fire, fire_interval, fire_cooldown)
     x_out = jnp.where(should_fire, ex_center, -1.0)
     y_out = jnp.where(should_fire, ey_center, -1.0)
+
     vx_out = jnp.where(should_fire, vx, 0.0)
     vy_out = jnp.where(should_fire, vy, 0.0)
+
     bullets_out = Bullets(
         x=x_out,
         y=y_out,
@@ -1115,6 +1211,7 @@ def enemy_fire(enemies: Enemies,
         vy=vy_out,
         alive=should_fire
     )
+
     return bullets_out, new_fire_cooldown, key
 
 
@@ -1130,11 +1227,16 @@ def check_collision(bullets: Bullets, enemies: Enemies):
             # Rectangle bounding box, Enemy's bounding box: (x, x+w), (y, y+h)
             within_x = (x > enemies.x[j]) & (x < enemies.x[j] + enemies.w[j])
             within_y = (y > enemies.y[j]) & (y < enemies.y[j] + enemies.h[j])
+
             return hit | (within_x & within_y)
+        
         hit_any = jax.lax.fori_loop(0, MAX_ENEMIES, check_each_enemy, False)
+
         return carry.at[i].set(hit_any & alive)
+    
     hits = jnp.zeros((MAX_BULLETS,), dtype=bool)
     hits = jax.lax.fori_loop(0, MAX_BULLETS, bullet_hits_enemy, hits)
+
     return hits
 
 
@@ -1154,6 +1256,7 @@ def step_core_map(state: ShipState,
         new_state.vy,
         new_state.angle
     ])
+
     reward = 0.0
     done = False
     info = {}
@@ -1168,6 +1271,7 @@ def step_core_map(state: ShipState,
     reset = jnp.any(within_planet)
     level_idx = jnp.argmax(within_planet)
     level = jnp.where(reset, level_ids[level_idx], -1)
+
     return obs, new_state, reward, done, info, reset, level
 
 # ========== Step Core Level Skeleton ==========
@@ -1176,16 +1280,22 @@ def terrain_hit_mask(mask: jnp.ndarray, x: jnp.ndarray, y: jnp.ndarray, radius: 
     H, W = mask.shape
     R_MAX = 8
     r = jnp.int32(jnp.clip(radius, 1.0, float(R_MAX)))
+
     dx_full = jnp.arange(-R_MAX, R_MAX + 1, dtype=jnp.int32)
     dy_full = jnp.arange(-R_MAX, R_MAX + 1, dtype=jnp.int32)
+
     DX, DY = jnp.meshgrid(dx_full, dy_full, indexing='xy')
     valid = (jnp.abs(DX) <= r) & (jnp.abs(DY) <= r) & ((DX * DX + DY * DY) <= (r * r))
+
     mx = jnp.floor(x).astype(jnp.int32)
     my = jnp.floor(y).astype(jnp.int32)
+
     sx = jnp.clip(mx + DX, 0, W - 1)
     sy = jnp.clip(my + DY, 0, H - 1)
+
     samples = mask[sy, sx].astype(jnp.uint8)
     samples = jnp.where(valid, samples, 0)
+    
     return jnp.any(samples > 0)
 
 @jax.jit
@@ -1200,12 +1310,20 @@ def step_map(env_state: EnvState, action: int):
         vx=jnp.where(was_crashing, 0.0, env_state.state.vx),
         vy=jnp.where(was_crashing, 0.0, env_state.state.vy)
     )
+
     actual_action = jnp.where(was_crashing, NOOP, action)
     ship_after_move = ship_step(ship_state_before_move, actual_action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     can_fire = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (env_state.cooldown == 0) & (_bullets_alive_count(env_state.bullets) < 2)
-    bullets = jax.lax.cond(can_fire, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 2), lambda b: b, env_state.bullets)
+
+    bullets = jax.lax.cond(
+        can_fire, 
+        lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, PLAYER_BULLET_SPEED), 
+        lambda b: b, 
+        env_state.bullets
+    )
+
     bullets = update_bullets(bullets)
-    cooldown = jnp.where(can_fire, 5, jnp.maximum(env_state.cooldown - 1, 0))
+    cooldown = jnp.where(can_fire, PLAYER_FIRE_COOLDOWN_FRAMES, jnp.maximum(env_state.cooldown - 1, 0))
     
     # Initialize a temporary `env_state` for subsequent chained updates
     new_env = env_state._replace(state=ship_after_move, bullets=bullets, cooldown=cooldown)
@@ -1213,28 +1331,34 @@ def step_map(env_state: EnvState, action: int):
     # --- 3. Saucer Logic ---
     saucer = new_env.saucer
     timer = new_env.saucer_spawn_timer
+
     should_tick_timer = (new_env.mode == 0) & (~saucer.alive) & (saucer.death_timer == 0)
     timer = jnp.where(should_tick_timer, jnp.maximum(timer - 1, 0), timer)
     
     rx, ry, has_reactor = _get_reactor_center(new_env.planets_px, new_env.planets_py, new_env.planets_pi)
     should_spawn = (timer == 0) & (~saucer.alive) & has_reactor
+
     saucer = jax.lax.cond(should_spawn, lambda: _spawn_saucer_at(rx, ry, new_env.state.x, new_env.state.y, SAUCER_SPEED_MAP), lambda: saucer)
     timer = jnp.where(should_spawn, 99999, timer)
     
     saucer_after_move = jax.lax.cond(saucer.alive, lambda s: _update_saucer_seek(s, new_env.state.x, new_env.state.y, SAUCER_SPEED_MAP), lambda s: s, operand=saucer)
     bullets_after_hit, hit_any_bullet = _bullets_hit_saucer(new_env.bullets, saucer_after_move)
+
     sauc_after_hp = saucer_after_move._replace(hp=saucer_after_move.hp - jnp.where(hit_any_bullet, 1, 0))
     just_died = (saucer_after_move.hp > 0) & (sauc_after_hp.hp <= 0) & saucer_after_move.alive
     
     timer = jnp.where(just_died, SAUCER_RESPAWN_DELAY_FRAMES, timer)
+
     sauc_final = sauc_after_hp._replace(
         alive=sauc_after_hp.hp > 0,
         death_timer=jnp.where(just_died, SAUCER_EXPLOSION_FRAMES, jnp.maximum(saucer_after_move.death_timer - 1, 0))
     )
+
     mode_timer = jnp.where(new_env.mode == 0, new_env.mode_timer + 1, 0)
     
     enemy_bullets = _saucer_fire_one(sauc_final, new_env.state.x, new_env.state.y, new_env.enemy_bullets, mode_timer)
     enemy_bullets = update_bullets(enemy_bullets)
+
     new_env = new_env._replace(
         bullets=bullets_after_hit, saucer=sauc_final, saucer_spawn_timer=timer,
         enemy_bullets=enemy_bullets, mode_timer=mode_timer
@@ -1248,6 +1372,7 @@ def step_map(env_state: EnvState, action: int):
     # b) Ship collides with an obstacle
     px, py, pr, pi, pid = new_env.planets_px, new_env.planets_py, new_env.planets_pr, new_env.planets_pi, new_env.planets_id
     dx, dy = px - new_env.state.x, py - new_env.state.y
+
     dist2 = dx*dx + dy*dy
     hit_obstacle = jnp.any((pi == SpriteIdx.OBSTACLE) & (dist2 <= (pr + SHIP_RADIUS)**2))
     
@@ -1257,16 +1382,20 @@ def step_map(env_state: EnvState, action: int):
     # d) Unify the crash timer logic
     start_crash = ship_should_crash & (~was_crashing)
     crash_timer_next = jnp.where(start_crash, 30, jnp.maximum(new_env.crash_timer - 1, 0))
+
     new_env = new_env._replace(crash_timer=crash_timer_next)
     is_crashing_now = new_env.crash_timer > 0
     
     # e) Disable other collisions during a crash ("ghost" state)
     allowed = jnp.any(jnp.stack([pi==SpriteIdx.PLANET1, pi==SpriteIdx.PLANET2, pi==SpriteIdx.PLANET3, pi==SpriteIdx.PLANET4, pi==SpriteIdx.REACTOR], 0), axis=0)
     allowed = allowed & (~new_env.planets_cleared_mask)
+
     is_reactor_and_destroyed = (pi == int(SpriteIdx.REACTOR)) & new_env.reactor_destroyed
     allowed = allowed & (~is_reactor_and_destroyed)
+
     hit_planet = allowed & (dist2 <= (pr*0.85 + SHIP_RADIUS)**2)
     can_enter_planet = jnp.any(hit_planet) & (~is_crashing_now)
+
     hit_to_arena = sauc_final.alive & _circle_hit(new_env.state.x, new_env.state.y, SHIP_RADIUS, sauc_final.x, sauc_final.y, SAUCER_RADIUS) & (~is_crashing_now)
     
     def _enter_arena(env):
@@ -1311,34 +1440,80 @@ def _step_level_core(env_state: EnvState, action: int):
     def _spawn_ufo_once(env):
         W, H = WINDOW_WIDTH, WINDOW_HEIGHT
         b = env.terrain_bank_idx
-        x_frac = jnp.where(b == 1, 0.85, 0.85)
-        x_frac = jnp.where(b == 2, 0.15, x_frac)
-        x_frac = jnp.where(b == 3, 0.80, x_frac)
-        x_frac = jnp.where(b == 4, 0.20, x_frac)
-        x0 = x_frac * W
-        col_x = jnp.clip(jnp.int32(x0), 0, W - 1)
+        
+        # 1. Determine UFO's spawn X coordinate and initial velocity
+        is_born_on_left = (b == 2) | (b == 4)
+        x0 = jnp.where(is_born_on_left, 0.15 * W, 0.85 * W)
+        vx = jnp.where(is_born_on_left, 0.6 / WORLD_SCALE, -0.6 / WORLD_SCALE)
+
+        # 2. Check for the safe altitude across the entire future path
         bank_idx = jnp.clip(env.terrain_bank_idx, 0, env.terrain_bank.shape[0] - 1)
         terrain_page = env.terrain_bank[bank_idx]
-        is_ground_in_col = jnp.sum(terrain_page[:, col_x], axis=-1) > 0
-        y_indices = jnp.arange(H, dtype=jnp.int32)
-        ground_indices = jnp.where(is_ground_in_col, y_indices, H)
-        ground_y = jnp.min(ground_indices)
-        safe_y_max = jnp.float32(ground_y) - 20.0
-        y0 = jnp.minimum(jnp.float32(HUD_HEIGHT + 48.0), safe_y_max)
+
+        # We no longer slice, but compute over the entire terrain map
+        is_ground = jnp.sum(terrain_page, axis=-1) > 0
+        y_indices = jnp.arange(H, dtype=jnp.int32)[:, None] # Convert to column vector for broadcasting
+        
+        # Find the y-coordinates of all ground points in the terrain
+        ground_indices = jnp.where(is_ground, y_indices, H)
+        
+        # Among all these points, find the highest one (with the smallest y-value)
+        highest_point_on_map = jnp.min(ground_indices)
+
+        # 3. Calculate the final spawn Y coordinate (logic unchanged)
+        safe_y = jnp.float32(highest_point_on_map) - 10.0
+        final_y0 = jnp.clip(safe_y, HUD_HEIGHT + 20.0, H - 20.0)
+
+        # 4. Return the updated environment state (logic unchanged)
         return env._replace(
-            ufo=UFOState(x=x0, y=y0, vx=-0.04, vy=0.0, hp=1, alive=True, death_timer=0),
-            ufo_used=True, ufo_home_x=x0, ufo_home_y=y0,
+            ufo=UFOState(x=x0, y=final_y0, vx=vx, vy=0.0, hp=1, alive=True, death_timer=0),
+            ufo_used=True, ufo_home_x=x0, ufo_home_y=final_y0,
             ufo_bullets=create_empty_bullets_16(),
         )
+    
     can_spawn_ufo = (env_state.mode == 1) & (~env_state.ufo_used) & (env_state.terrain_bank_idx != 5)
     state_after_spawn = jax.lax.cond(can_spawn_ufo, _spawn_ufo_once, lambda e: e, env_state)
     
     # --- 2. State Update (Movement & Player Firing) ---
     ship_after_move = ship_step(state_after_spawn.state, action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     can_fire_player = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (state_after_spawn.cooldown == 0) & (_bullets_alive_count(state_after_spawn.bullets) < 2)
-    bullets = jax.lax.cond(can_fire_player, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 0.2), lambda b: b, state_after_spawn.bullets)
-    cooldown = jnp.where(can_fire_player, 5, jnp.maximum(state_after_spawn.cooldown - 1, 0))
     
+    bullets = jax.lax.cond(
+        can_fire_player, 
+        lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, PLAYER_BULLET_SPEED), 
+        lambda b: b, 
+        state_after_spawn.bullets
+    )
+
+    cooldown = jnp.where(can_fire_player, PLAYER_FIRE_COOLDOWN_FRAMES, jnp.maximum(state_after_spawn.cooldown - 1, 0))
+    
+    # --- New: Fuel Tank Collection Logic ---
+    ship = ship_after_move
+    tanks = state_after_spawn.fuel_tanks
+    ship_left = ship.x - SHIP_RADIUS
+    ship_right = ship.x + SHIP_RADIUS
+    ship_top = ship.y - SHIP_RADIUS
+    ship_bottom = ship.y + SHIP_RADIUS
+    
+    tank_half_w = tanks.w / 2
+    tank_half_h = tanks.h / 2
+    
+    tank_left = tanks.x - tank_half_w
+    tank_right = tanks.x + tank_half_w
+    tank_top = tanks.y - tank_half_h
+    tank_bottom = tanks.y + tank_half_h
+
+    overlap_x = (ship_right > tank_left) & (ship_left < tank_right)
+    overlap_y = (ship_bottom > tank_top) & (ship_top < tank_bottom)
+    
+    collision_mask = tanks.active & overlap_x & overlap_y
+    
+    new_tanks_active = tanks.active & ~collision_mask
+    new_fuel_tanks = tanks._replace(active=new_tanks_active)
+    
+    num_tanks_collected = jnp.sum(collision_mask)
+    score_from_tanks = num_tanks_collected * 150.0
+
     # --- 3. Integrate UFO Logic ---
     # Call the new helper function that returns an `env_state` with partially updated UFO-related states
     state_after_ufo = _update_ufo(state_after_spawn, ship_after_move, bullets)
@@ -1350,6 +1525,7 @@ def _step_level_core(env_state: EnvState, action: int):
     # --- 4. Ground Enemy (Turret) Logic ---
     enemies = enemy_step(state_after_ufo.enemies, WINDOW_WIDTH)
     is_exploding = enemies.death_timer > 0
+
     enemies = enemies._replace(
         death_timer=jnp.maximum(enemies.death_timer - 1, 0),
         w=jnp.where(is_exploding & (enemies.death_timer == 1), 0.0, enemies.w),
@@ -1365,7 +1541,9 @@ def _step_level_core(env_state: EnvState, action: int):
     # 2. Decide which turrets "can" fire now
     can_fire_globally = _bullets_alive_count(current_enemy_bullets) < 1
     is_turret = (enemies.sprite_idx == int(SpriteIdx.ENEMY_ORANGE)) | \
-            (enemies.sprite_idx == int(SpriteIdx.ENEMY_GREEN))
+                (enemies.sprite_idx == int(SpriteIdx.ENEMY_GREEN)) | \
+                (enemies.sprite_idx == int(SpriteIdx.ENEMY_ORANGE_FLIPPED))
+    
     turrets_ready_mask = (enemies.w > 0) & (current_fire_cooldown == 0) & is_turret
     should_fire_mask = turrets_ready_mask & can_fire_globally
     any_turret_firing = jnp.any(should_fire_mask)
@@ -1381,19 +1559,26 @@ def _step_level_core(env_state: EnvState, action: int):
     def _generate_bullets(_):
         ex_center = enemies.x + enemies.w / 2
         ey_center = enemies.y - enemies.h / 2
+
         dx = ship_after_move.x - ex_center
         dy = ship_after_move.y - ey_center
+
         dist = jnp.sqrt(dx ** 2 + dy ** 2)
         dist = jnp.where(dist < 1e-3, 1.0, dist)
-        vx = dx / dist * 0.4  # enemy_bullet_speed
-        vy = dy / dist * 0.4
+
+        vx = dx / dist * (2.0 * 0.2 * 0.3)
+        vy = dy / dist * (2.0 * 0.2 * 0.3)
+
         x_out = jnp.where(should_fire_mask, ex_center, -1.0)
         y_out = jnp.where(should_fire_mask, ey_center, -1.0)
+
         vx_out = jnp.where(should_fire_mask, vx, 0.0)
         vy_out = jnp.where(should_fire_mask, vy, 0.0)
+
         return Bullets(x=x_out, y=y_out, vx=vx_out, vy=vy_out, alive=should_fire_mask)
     
     def _get_empty_bullets(_):
+
         return create_empty_bullets_16()
 
     new_enemy_bullets = jax.lax.cond(
@@ -1435,8 +1620,20 @@ def _step_level_core(env_state: EnvState, action: int):
 
     # b) Special rules for the Reactor level
     is_in_reactor = (state_after_ufo.current_level == 4)
-    is_dest_mask = (enemies.sprite_idx == int(SpriteIdx.REACTOR_DEST))
-    win_reactor = jnp.any(hit_enemy_mask & is_dest_mask) & is_in_reactor
+
+    # 1. Calculate the squared distance from ship center to Destination center
+    dx_dest = ship_after_move.x - env_state.reactor_dest_x
+    dy_dest = ship_after_move.y - env_state.reactor_dest_y
+    dist_sq_dest = dx_dest**2 + dy_dest**2
+    
+    # 2. Calculate the squared sum of collision radii
+    #    (SHIP_RADIUS + a small radius for the destination) ^ 2
+    #    We give the destination a radius, e.g., 5
+    combined_radius_sq = (SHIP_RADIUS + 5.0)**2
+    
+    # 3. Victory condition: in reactor & destination is active & close enough
+    win_reactor = is_in_reactor & env_state.reactor_dest_active & (dist_sq_dest < combined_radius_sq)
+
     crash_in_reactor = dead & is_in_reactor
 
     # c) Score calculation
@@ -1457,7 +1654,7 @@ def _step_level_core(env_state: EnvState, action: int):
     # -- UFO: was alive last frame and is now dead (and has an explosion timer) --
     ufo_just_died = (state_after_ufo.ufo.alive == False) & (env_state.ufo.alive == True) & (state_after_ufo.ufo.death_timer > 0)
     score_from_ufo = jnp.where(ufo_just_died, 100.0, 0.0)
-    score_delta = score_from_enemies + score_from_reactor + score_from_ufo
+    score_delta = score_from_enemies + score_from_reactor + score_from_ufo + score_from_tanks
 
     # d) Crash and respawn logic
     was_crashing = state_after_ufo.crash_timer > 0
@@ -1470,15 +1667,11 @@ def _step_level_core(env_state: EnvState, action: int):
     
     # e) The final Reset signal
     all_enemies_gone = jnp.all(enemies.w == 0) & (~ufo.alive) & (ufo.death_timer == 0)
-    has_meaningful_enemies = jnp.any(w_before_hit > 0)
+    has_meaningful_enemies = jnp.any(state_after_ufo.enemies.w > 0)
     reset_level_win = all_enemies_gone & has_meaningful_enemies & (~is_in_reactor)
-    # A reset from a reactor crash should only happen AFTER the crash animation is done.
-    # The animation is finished when the crash_timer from the *previous* state was 1.
-    crash_animation_finished = (state_after_ufo.crash_timer == 1)
-    reset_from_reactor_crash = crash_in_reactor & crash_animation_finished
 
     # Total Reset signal = Normal win OR Reactor win OR (Reactor crash AND animation finished)
-    reset = reset_level_win | win_reactor | reset_from_reactor_crash
+    reset = reset_level_win | win_reactor
 
     # f) Is the game over?
     game_over = respawn_now & (lives_next <= 0)
@@ -1520,6 +1713,7 @@ def _step_level_core(env_state: EnvState, action: int):
         state=state, bullets=bullets, cooldown=cooldown, enemies=enemies,
         enemy_bullets=enemy_bullets, fire_cooldown=fire_cooldown, key=key,
         ufo=ufo, ufo_bullets=ufo_bullets,
+        fuel_tanks=new_fuel_tanks,
         score=state_after_ufo.score + score_delta,          # Use the merged score
         crash_timer=crash_timer_next,
         lives=lives_next,
@@ -1533,6 +1727,7 @@ def _step_level_core(env_state: EnvState, action: int):
     
     crash_animation_finished = (state_after_ufo.crash_timer == 1)
     reset_from_reactor_crash = crash_in_reactor & crash_animation_finished
+
     info = {
         "crash": start_crash,
         "hit_by_bullet": hit_by_enemy_bullet | hit_by_ufo_bullet,
@@ -1569,14 +1764,17 @@ def step_core_level(env_state: EnvState,
     # Handle shooting
     fire_actions = jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])
     is_firing = jnp.isin(action, fire_actions)
+
     PLAYER_MAX_BULLETS = jnp.int32(2)
     alive_cnt = _bullets_alive_count(bullets) 
+
     bullets = jax.lax.cond(
         is_firing & (cooldown == 0) & (alive_cnt < PLAYER_MAX_BULLETS),
         lambda _: fire_bullet(bullets, state.x, state.y, state.angle, bullet_speed),
         lambda _: bullets,
         operand=None
     )
+
     bullets = update_bullets(bullets)
     cooldown = jnp.where(is_firing & (cooldown == 0), cooldown_max, jnp.maximum(cooldown - 1, 0))
 
@@ -1594,19 +1792,24 @@ def step_core_level(env_state: EnvState,
     # Enemy movement
     enemies = enemy_step(enemies, window_width=window_size[0])
     is_exploding = enemies.death_timer > 0
+
     enemies = enemies._replace(
         death_timer=jnp.maximum(enemies.death_timer - 1, 0),
         # Width and height only become 0 after the timer expires
         w=jnp.where(is_exploding & (enemies.death_timer == 1), 0.0, enemies.w),
         h=jnp.where(is_exploding & (enemies.death_timer == 1), 0.0, enemies.h)
     )
+
     can_fire_globally = _bullets_alive_count(enemy_bullets) < 1 
 
     def _do_fire(_):
+
         return enemy_fire(enemies, state.x, state.y, enemy_bullet_speed, fire_cooldown, fire_interval, key)
+    
     def _do_not_fire(_):
         empty_bullets = Bullets(x=jnp.zeros_like(enemies.x), y=jnp.zeros_like(enemies.y), vx=jnp.zeros_like(enemies.vx), vy=jnp.zeros_like(enemies.vx), alive=jnp.zeros_like(enemies.w, dtype=bool))
         new_cooldown = jnp.maximum(fire_cooldown - 1, 0)
+
         return empty_bullets, new_cooldown, key
     
     new_enemy_bullets, fire_cooldown, key = jax.lax.cond(can_fire_globally, _do_fire, _do_not_fire, operand=None)
@@ -1638,14 +1841,17 @@ def step_core_level(env_state: EnvState,
 
     new_enemy_bullets = pad_bullets(new_enemy_bullets, target_len=16)
     enemy_bullets = pad_bullets(enemy_bullets, target_len=16)
+
     enemy_bullets = merge_bullets(enemy_bullets, new_enemy_bullets)
     enemy_bullets = update_bullets(enemy_bullets)
+
     enemy_bullets = truncate_bullets(enemy_bullets, max_len=16)
 
     # Enemy bullet collision with terrain
     enemy_bullet_radius = 0.4
     enemies_to_check_mask = enemy_bullets.alive
     hit_terrain_mask_enemy = batched_terrain_hit(env_state, enemy_bullets.x, enemy_bullets.y, enemy_bullet_radius)
+
     new_enemy_bullets_alive = enemy_bullets.alive & ~hit_terrain_mask_enemy
     enemy_bullets = enemy_bullets._replace(alive=new_enemy_bullets_alive)
     # Bullet-to-enemy collision detection
@@ -1698,6 +1904,7 @@ def step_core_level(env_state: EnvState,
 
     # Is the crash animation already playing? (timer > 0 in the previous frame) 
     was_crashing = env_state.crash_timer > 0
+
     # Did the ship "just crash" this frame? (start the animation)
     start_crash = (~was_crashing) & dead
 
@@ -1719,10 +1926,12 @@ def step_core_level(env_state: EnvState,
     # Respawn: Only reset the "player/player bullets/enemy bullets/cooldowns", keep the enemy state
     def _respawn(_):
         respawn_state = make_level_start_state(env_state.current_level)
+
         # Apply scene-specific offset (reactor is -30, others are 0)
         respawn_state = respawn_state._replace(
             x = respawn_state.x + env_state.respawn_shift_x
         )
+
         return (
             respawn_state,
             create_empty_bullets_64(),                            # Player bullets cleared
@@ -1745,6 +1954,7 @@ def step_core_level(env_state: EnvState,
     # A win only counts if there were "meaningful enemies" in the level that are now all gone
     has_enemies     = jnp.any(enemies.w > 0.0)
     all_dead        = jnp.all(enemies.w == 0.0)
+
     reset_level_win = has_enemies & (~start_crash) & (crash_timer_next == 0) & all_dead
     reset = reset_level_win
 
@@ -1754,6 +1964,7 @@ def step_core_level(env_state: EnvState,
     # Check for reach (only in the reactor and if the destination is active)
     dxg = state.x - env_state.reactor_dest_x
     dyg = state.y - env_state.reactor_dest_y
+
     dist2_goal = dxg*dxg + dyg*dyg
     reach_goal = is_reactor & env_state.reactor_dest_active & (dist2_goal <= env_state.reactor_dest_radius**2)
 
@@ -1798,13 +2009,21 @@ def step_arena(env_state: EnvState, action: int):
     ship_after_move = ship_step(ship, actual_action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     
     can_fire = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (env_state.cooldown == 0) & (_bullets_alive_count(env_state.bullets) < 2)
-    bullets = jax.lax.cond(can_fire, lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, 2.0), lambda b: b, env_state.bullets)
+
+    bullets = jax.lax.cond(
+        can_fire,
+        lambda b: fire_bullet(b, ship_after_move.x, ship_after_move.y, ship_after_move.angle, PLAYER_BULLET_SPEED),
+        lambda b: b,
+        env_state.bullets
+        )
+    
     bullets = update_bullets(bullets)
-    cooldown = jnp.where(can_fire, 5, jnp.maximum(env_state.cooldown - 1, 0))
+    cooldown = jnp.where(can_fire, PLAYER_FIRE_COOLDOWN_FRAMES, jnp.maximum(env_state.cooldown - 1, 0))
 
     # --- 3. Saucer Movement and Firing ---
     saucer_after_move = jax.lax.cond(saucer.alive, lambda s: _update_saucer_seek(s, ship_after_move.x, ship_after_move.y, SAUCER_SPEED_ARENA), lambda s: s, operand=saucer)
     can_shoot_saucer = saucer_after_move.alive & (_bullets_alive_count(env_state.enemy_bullets) < 1) & ((env_state.mode_timer % SAUCER_FIRE_INTERVAL_FRAMES) == 0)
+
     enemy_bullets = jax.lax.cond(can_shoot_saucer, lambda eb: _fire_single_from_to(eb, saucer_after_move.x, saucer_after_move.y, ship_after_move.x, ship_after_move.y, SAUCER_BULLET_SPEED), lambda eb: eb, operand=env_state.enemy_bullets)
     enemy_bullets = update_bullets(enemy_bullets)
 
@@ -1824,8 +2043,10 @@ def step_arena(env_state: EnvState, action: int):
     saucer_is_hit = hit_saucer_by_bullet | hit_saucer_by_contact
     hp_after_hit = saucer_after_move.hp - jnp.where(saucer_is_hit, 1, 0) # Simplified: 1 HP is lost per hit
     was_alive = saucer_after_move.alive
+
     is_dead_now = hp_after_hit <= 0
     just_died = was_alive & is_dead_now
+
     saucer_final = saucer_after_move._replace(
         hp=hp_after_hit,
         alive=was_alive & (~is_dead_now),
@@ -1899,56 +2120,106 @@ def _update_ufo(env: EnvState, ship: ShipState, bullets: Bullets) -> EnvState:
     
     # --- Nested Helper Function Definitions ---
     def ground_safe_y_at(e, xf):
+        
         W, H = WINDOW_WIDTH, WINDOW_HEIGHT
         bank_idx = jnp.clip(e.terrain_bank_idx, 0, e.terrain_bank.shape[0] - 1)
+
         terrain_page = e.terrain_bank[bank_idx]
         col_x = jnp.clip(xf.astype(jnp.int32), 0, W - 1)
+
         is_ground_in_col = jnp.sum(terrain_page[:, col_x], axis=-1) > 0
         y_indices = jnp.arange(H, dtype=jnp.int32)
+
         ground_indices = jnp.where(is_ground_in_col, y_indices, H)
         ground_y = jnp.min(ground_indices)
+
         return jnp.float32(ground_y) - 20.0 # CLEARANCE
 
     # --- Logic for when the UFO is alive ---
     def _alive_step(e, ship, bullets):
         u = e.ufo
-        MIN_ALT = jnp.float32(HUD_HEIGHT + 48.0)
         
-        # 1. Movement
-        nx = jnp.clip(u.x + u.vx, 8.0, WINDOW_WIDTH - 8.0)
-        safe_next = ground_safe_y_at(e, nx)
-        corridor_blocked = safe_next <= MIN_ALT
-        vx_after_move = jnp.where(corridor_blocked, -u.vx, u.vx)
-        x_after_move  = jnp.where(corridor_blocked, u.x, nx)
-        safe_here = ground_safe_y_at(e, x_after_move)
-        y_after_move = jnp.maximum(jnp.minimum(u.y, safe_here), MIN_ALT)
-        u_after_move = u._replace(x=x_after_move, y=y_after_move, vx=vx_after_move)
+        # --- 1. Define physics and boundary constants ---
+        LEFT_BOUNDARY = 8.0
+        RIGHT_BOUNDARY = WINDOW_WIDTH - 8.0
+        MIN_ALTITUDE = jnp.float32(HUD_HEIGHT + 20.0)
+        VERTICAL_ADJUST_SPEED = 0.5 / WORLD_SCALE # Max vertical speed for the UFO
         
-        # 2. Collision Detection
+        # --- 2. Horizontal Movement Logic ---
+        # a. Calculate the theoretical next X position
+        next_x = u.x + u.vx
+        
+        # b. Check for collision with horizontal boundaries
+        hit_left_wall = (next_x <= LEFT_BOUNDARY)
+        hit_right_wall = (next_x >= RIGHT_BOUNDARY)
+        hit_horizontal_boundary = hit_left_wall | hit_right_wall
+
+        # c. Calculate the final horizontal velocity
+        final_vx = jnp.where(hit_horizontal_boundary, -u.vx, u.vx)
+        
+        # d. Update horizontal position and clamp it for safety
+        final_x = jnp.clip(u.x + final_vx, LEFT_BOUNDARY, RIGHT_BOUNDARY)
+
+        # --- 3. Vertical Movement Logic (New smooth version) ---
+        # a. Find the safe Y coordinate below the current X position
+        safe_y_here = ground_safe_y_at(e, final_x)
+        
+        # b. Determine the UFO's vertical target position
+        #    Target = 20 pixels above ground, but not lower than the minimum altitude
+        target_y = jnp.maximum(safe_y_here - 20.0, MIN_ALTITUDE)
+
+        # c. Calculate the vertical velocity towards the target
+        #    If UFO is above target (u.y < target_y), vy should be positive (move down)
+        #    If UFO is below target (u.y > target_y), vy should be negative (move up)
+        y_difference = target_y - u.y
+        
+        #    Clip the vertical velocity to achieve smooth movement
+        final_vy = jnp.clip(y_difference, -VERTICAL_ADJUST_SPEED, VERTICAL_ADJUST_SPEED)
+        
+        # d. Update vertical position based on the calculated velocity
+        final_y = u.y + final_vy
+        
+        # e. Final safety clamp to ensure the UFO never leaves the safe zone
+        final_y = jnp.clip(final_y, MIN_ALTITUDE, WINDOW_HEIGHT - 20.0)
+
+        # --- 4. Assemble the updated UFO state after all calculations ---
+        u_after_move = u._replace(x=final_x, y=final_y, vx=final_vx, vy=final_vy)
+        
+        # --- 5. Subsequent logic (collision, firing, etc.) remains unchanged ---
+        
+        # a. Collision Detection
         hit_by_ship = _circle_hit(ship.x, ship.y, SHIP_RADIUS, u_after_move.x, u_after_move.y, UFO_HIT_RADIUS) & u_after_move.alive
         bullets_after_hit, hit_by_bullet = _bullets_hit_ufo(bullets, u_after_move)
 
-        # 3. State Update
+        # b. State Update
         hp_after_hit = u_after_move.hp - jnp.where(hit_by_bullet, 1, 0)
         was_alive = u_after_move.alive
+
         is_dead_now = hit_by_ship | (hp_after_hit <= 0)
         just_died = was_alive & is_dead_now
+
         u_final = u_after_move._replace(
             hp=hp_after_hit,
             alive=was_alive & (~is_dead_now),
             death_timer=jnp.where(just_died, SAUCER_EXPLOSION_FRAMES, u_after_move.death_timer)
         )
 
-        # 4. Firing Logic
+        # c. Firing Logic
         FIRE_COOLDOWN = jnp.int32(45)
         no_ufo_bullet_alive = ~jnp.any(e.ufo_bullets.alive)
+
         cd_ok = (e.mode_timer % FIRE_COOLDOWN) == 0
         can_shoot = u_final.alive & no_ufo_bullet_alive & cd_ok
+        
         def _fire_one(bul):
-            return _fire_single_from_to(bul, u_final.x, u_final.y, ship.x, ship.y, 0.4)
+            # Ensure the bullet speed is also affected by WORLD_SCALE
+            ufo_bullet_speed = 2.2 / WORLD_SCALE 
+
+            return _fire_single_from_to(bul, u_final.x, u_final.y, ship.x, ship.y, ufo_bullet_speed)
+            
         ufo_bullets = jax.lax.cond(can_shoot, _fire_one, lambda b: b, e.ufo_bullets)
         
-        # 5. Return the complete environment state
+        # 6. Return the final environment state with all updates
         return e._replace(ufo=u_final, bullets=bullets_after_hit, ufo_bullets=ufo_bullets)
 
     # --- Logic for when the UFO is dead ---
@@ -1966,9 +2237,39 @@ def _update_ufo(env: EnvState, ship: ShipState, bullets: Bullets) -> EnvState:
 def step_core(env_state: EnvState, action: int):
     # `jax.lax.switch` selects a function from the list based on the value of `mode` (0, 1, or 2)
     # It automatically passes the `(env_state, action)` operands to the chosen function.
-    return jax.lax.switch(
-        jnp.clip(env_state.mode, 0, 2),
-        [step_map, _step_level_core, step_arena],
+    def _game_is_over(state, _):
+        # If the game is over (state.done is True), do nothing and return the current state.
+        # This effectively freezes the game.
+        
+        # 1. Create an info dictionary with the same structure as the _game_is_running branch
+        #    to satisfy the type requirements of jax.lax.cond.
+        info = {
+            "crash": jnp.array(False), 
+            "hit_by_bullet": jnp.array(False),
+            "reactor_crash_exit": jnp.array(False), 
+        }
+        
+        # 2. Return a tuple with the same pytree structure as the other branch.
+        obs = jnp.array([state.state.x, state.state.y, state.state.vx, state.state.vy, state.state.angle])
+
+        return obs, state, 0.0, True, info, False, -1
+
+    def _game_is_running(state, act):
+       # If the game is still running, use jax.lax.switch to call the correct
+        # step function based on the game mode (0: map, 1: level, 2: arena).
+
+        return jax.lax.switch(
+            jnp.clip(state.mode, 0, 2),
+            [step_map, _step_level_core, step_arena],
+            state,
+            act
+        )
+
+    # (jax.lax.cond 调用保持不变)
+    return jax.lax.cond(
+        env_state.done,
+        _game_is_over,
+        _game_is_running,
         env_state,
         action
     )
@@ -2034,12 +2335,14 @@ class JaxGravitar(JaxEnvironment):
         self.num_actions = 18
         self.render_backend = render_backend
 
+        # These are for the Pygame window, not the JAX environment resolution
         self.base_w, self.base_h = 160, 192
         self.window_w, self.window_h = 720, 960
 
         self.world = pygame.Surface((self.base_w, self.base_h), pygame.SRCALPHA)
         self.num_actions = getattr(self, "num_actions", 18)
-        # ---- Game State ----
+
+        # ---- Legacy Game State (for Pygame rendering) ----
         self.score = 0
         self.lives = 6
         self.current_level = None
@@ -2048,7 +2351,7 @@ class JaxGravitar(JaxEnvironment):
         self.key = jrandom.PRNGKey(0)
         self.mode = "map"
 
-        # ---- Bullet Containers ----
+        # ---- Legacy Bullet Containers (for Pygame rendering) ----
         self.bullets = Bullets(
             x=jnp.zeros((0,)), y=jnp.zeros((0,)),
             vx=jnp.zeros((0,)), vy=jnp.zeros((0,)),
@@ -2068,7 +2371,7 @@ class JaxGravitar(JaxEnvironment):
         self.cooldown = 0
         self.cooldown_max = 5
 
-        # ---- Rendering Backend ----
+        # ---- Rendering Backend Initialization ----
         if self.render_backend == "pygame":
             pygame.init()
             pygame.font.init()
@@ -2076,6 +2379,27 @@ class JaxGravitar(JaxEnvironment):
             self.screen = pygame.display.set_mode(self.screen_size)
             pygame.display.set_caption("Gravitar")
             self.sprites = load_sprites_tuple()
+
+        # --- Storing Native Sprite Dimensions ---
+        # 1. Create a dictionary to store the native render dimensions of sprites
+        self.sprite_dims = {}
+        
+        # 2. Define a list of sprites whose dimensions we need to measure
+        sprites_to_measure = [
+            SpriteIdx.ENEMY_ORANGE,
+            SpriteIdx.ENEMY_GREEN,
+            SpriteIdx.FUEL_TANK,
+            SpriteIdx.ENEMY_UFO,
+        ]
+        
+        # 3. Iterate through the list, calculate, and store the native dimensions
+        for sprite_idx in sprites_to_measure:
+            sprite_surf = self.sprites[sprite_idx]
+            if sprite_surf:
+                native_width = sprite_surf.get_width()
+                native_height = sprite_surf.get_height()
+                self.sprite_dims[int(sprite_idx)] = (native_width, native_height)
+        # --- End of Dimension Storing ---
 
         # ---- Unify "Map Layout" and "Collision Radii" (consistent with rendering) ----
         MAP_SCALE = 3           # Must match `MAP_SCALE` in `render()`
@@ -2098,8 +2422,12 @@ class JaxGravitar(JaxEnvironment):
             spr = self.sprites[idx]
 
             if spr is not None:
-                r = 0.1 * max(spr.get_width(), spr.get_height()) * MAP_SCALE * HITBOX_SCALE
-
+                # For obstacles, use a fixed collision radius suitable for the game world
+                if idx == SpriteIdx.OBSTACLE:
+                    r = 8.0 / WORLD_SCALE # Ensure it's also affected by the world scale
+                # For all other objects (planets), maintain the original map visual logic
+                else:
+                    r = 0.3 * max(spr.get_width(), spr.get_height()) * MAP_SCALE * HITBOX_SCALE
             else:
                 r = 4
 
@@ -2115,10 +2443,10 @@ class JaxGravitar(JaxEnvironment):
         self.num_planets = len(px)
         self.terrain_bank = self._build_terrain_bank()
 
+        # ---- JIT Helper Initialization ----
+        # Create dummy states to get the pytree structure for jax.pure_callback
         dummy_key = jax.random.PRNGKey(0)
-
         _, dummy_state = self.reset(dummy_key) 
-
         tmp_obs, tmp_state = self.reset_level(dummy_key, 0, dummy_state)
 
         self.reset_level_out_struct = (
@@ -2264,15 +2592,8 @@ class JaxGravitar(JaxEnvironment):
                 if bool(sau.alive):
                     sau_spr = self.sprites[SpriteIdx.ENEMY_SAUCER]
                     if sau_spr is not None:
-                        if SAUCER_SCALE != 1.0:
-                            w, h = sau_spr.get_width(), sau_spr.get_height()
-                            sau_spr_use = pygame.transform.scale(
-                                sau_spr, (int(w * SAUCER_SCALE), int(h * SAUCER_SCALE))
-                            )
-                        else:
-                            sau_spr_use = sau_spr
-                        rect = sau_spr_use.get_rect(center=(int(sau.x), int(sau.y)))
-                        scr.blit(sau_spr_use, rect.topleft)
+                        rect = sau_spr.get_rect(center=(int(sau.x), int(sau.y)))
+                        scr.blit(sau_spr, rect.topleft)
                     else:
                         pygame.draw.circle(scr, (200, 200, 255), (int(sau.x), int(sau.y)), int(SAUCER_RADIUS))
                 elif int(sau.death_timer) > 0:
@@ -2340,79 +2661,62 @@ class JaxGravitar(JaxEnvironment):
                             rect = boom_use.get_rect(center=(int(u.x), int(u.y)))
                             scr.blit(boom_use, rect.topleft)
                         else:
-                            r = int(SAUCER_RADIUS * UFO_SCALE) + int(10 * (1.0 + progress))
+                            r = int(UFO_HIT_RADIUS) + int(10 * (1.0 + progress)) 
                             pygame.draw.circle(scr, (255, 200, 120), (int(u.x), int(u.y)), r)
 
                     elif bool(u.alive):
                         ufo_spr = self.sprites[SpriteIdx.ENEMY_UFO] if self.sprites else None
                         if ufo_spr is not None:
-                            w, h = ufo_spr.get_width(), ufo_spr.get_height()
-                            ufo_use = pygame.transform.scale(ufo_spr, (int(w * UFO_SCALE), int(h * UFO_SCALE)))
-                            rect = ufo_use.get_rect(center=(int(u.x), int(u.y)))
-                            scr.blit(ufo_use, rect.topleft)
+                            rect = ufo_spr.get_rect(center=(int(u.x), int(u.y)))
+                            scr.blit(ufo_spr, rect.topleft)
                         else:
-                            pygame.draw.circle(scr, (180, 255, 180), (int(u.x), int(u.y)), int(SAUCER_RADIUS * UFO_SCALE))
+                            pygame.draw.circle(scr, (180, 255, 180), (int(u.x), int(u.y)), int(UFO_HIT_RADIUS))
 
-                # ----- Enemies/Turrets (aligned to top-left) -----
+                # ----- Enemies/Turrets -----
                 ens = env_state.enemies
                 for i in range(len(ens.x)):
-                    # Safety check, skip if enemy is invalid
+                    # 1. Safety check: skip invalid or dead enemies
                     if float(ens.w[i]) == 0.0 or int(ens.sprite_idx[i]) < 0:
                         continue
-                    
-                    # 1. Get the current enemy's type and original sprite
+
+                    # 2. Get the enemy's native sprite and logical coordinates
                     current_enemy_sprite_idx = int(ens.sprite_idx[i])
-                    enemy_spr_original = self.sprites[SpriteIdx(current_enemy_sprite_idx)]
+                    enemy_sprite = self.sprites[SpriteIdx(current_enemy_sprite_idx)]
                     
-                    if enemy_spr_original is None:
+                    if enemy_sprite is None:
                         continue
-
-                    # 2. Determine the scaling factor based on enemy type
-                    scale = 1.0
-                    if current_enemy_sprite_idx == int(SpriteIdx.ENEMY_ORANGE):
-                        scale = ENEMY_ORANGE_SCALE
-                    elif current_enemy_sprite_idx == int(SpriteIdx.ENEMY_GREEN):
-                        scale = ENEMY_GREEN_SCALE
-                    elif current_enemy_sprite_idx == int(SpriteIdx.FUEL_TANK):
-                        scale = FUEL_TANK_SCALE
                     
-                    # 3. Apply the scale to get the "scaled sprite"
-                    if scale != 1.0:
-                        w, h = enemy_spr_original.get_width(), enemy_spr_original.get_height()
-                        scaled_spr = pygame.transform.scale(enemy_spr_original, (int(w * scale), int(h * scale)))
-                    else:
-                        scaled_spr = enemy_spr_original
-
-                    # 4. Flip the scaled sprite based on the `flip_y` data
-                    if bool(ens.flip_y[i]):
-                        scaled_spr = pygame.transform.flip(scaled_spr, False, True) # True=horizontal, False=vertical
-                    
-                    # 5. Adjust the anchor point and calculate the final drawing coordinates
-                    scaled_w, scaled_h = scaled_spr.get_width(), scaled_spr.get_height()
+                    # Logical center coordinates
                     ex, ey = int(ens.x[i]), int(ens.y[i])
-                    
-                    draw_x = ex - scaled_w // 2
-                    draw_y = ey - scaled_h
 
-                    # Check if the current enemy is exploding
+                    # 3. Check if the enemy is in an exploding state
                     if int(ens.death_timer[i]) > 0:
-                        # If exploding, draw the explosion sprite
-                        crash_spr = self.sprites[SpriteIdx.ENEMY_CRASH]
-                        if crash_spr is not None:
-                            # To make the explosion more dynamic, scale it up during the animation
+                        # If exploding, draw the explosion effect
+                        crash_sprite = self.sprites[SpriteIdx.ENEMY_CRASH]
+                        if crash_sprite is not None:
+                            # Dynamically scale the explosion based on the death timer
                             progress = 1.0 - (int(ens.death_timer[i]) / ENEMY_EXPLOSION_FRAMES)
-                            crash_scale = 1.0 + progress * 0.5
-                            w, h = crash_spr.get_width(), crash_spr.get_height()
-                            scaled_crash_spr = pygame.transform.scale(crash_spr, (int(w * crash_scale), int(h * crash_scale)))
+                            crash_scale = 1.0 + progress * 2.0  # Adjust scale to prevent it from being too large
+                            
+                            w, h = crash_sprite.get_width(), crash_sprite.get_height()
+                            scaled_crash_sprite = pygame.transform.scale(crash_sprite, (int(w * crash_scale), int(h * crash_scale)))
 
-                            # Use the corrected coordinates to draw the explosion
-                            crash_w, crash_h = scaled_crash_spr.get_width(), scaled_crash_spr.get_height()
-                            crash_draw_x = int(ens.x[i]) - crash_w // 2
-                            crash_draw_y = int(ens.y[i]) - crash_h // 2             # Explosion is centered
-                            scr.blit(scaled_crash_spr, (crash_draw_x, crash_draw_y))
+                            # The explosion effect is also positioned by its center
+                            rect = scaled_crash_sprite.get_rect(center=(ex, ey))
+                            scr.blit(scaled_crash_sprite, rect.topleft)
                     else:
-                        # If not exploding, draw the normal enemy sprite
-                        scr.blit(scaled_spr, (draw_x, draw_y))
+                        # If in normal state, draw the enemy sprite
+                        
+                        # 4. Flip the sprite if necessary
+                        #    Note: We operate directly on the `enemy_sprite`
+                        if bool(ens.flip_y[i]):
+                            final_sprite_to_draw = pygame.transform.flip(enemy_sprite, False, True)
+                        else:
+                            final_sprite_to_draw = enemy_sprite
+                        
+                        # 5. Use center-point positioning to draw
+                        rect = final_sprite_to_draw.get_rect(center=(ex, ey))
+                        scr.blit(final_sprite_to_draw, rect.topleft)
 
             # Layer 3: Bullets
             pb = self.sprites[SpriteIdx.SHIP_BULLET] if self.sprites else None
@@ -2478,6 +2782,7 @@ class JaxGravitar(JaxEnvironment):
                 if not hasattr(self, "_ship_rot_cache"):
                     self._ship_rot_cache = {}
                 angle_deg = (-math.degrees(angle) - 90.0) % 360.0
+                
                 q = int(round(angle_deg / 5.0)) * 5
                 cache_key = (int(ship_idx), q, int(SHIP_SCALE * 100))
                 ship_rot = self._ship_rot_cache.get(cache_key)
@@ -2499,12 +2804,12 @@ class JaxGravitar(JaxEnvironment):
                 and env_state.terrain_sprite_idx == int(SpriteIdx.REACTOR_TERR)
                 and bool(env_state.reactor_dest_active)):
 
-                TARGET_X = 283  
-                TARGET_Y = 333 
+                target_x_render = 60
+                target_y_render = 90
 
                 dest_surf = self.sprites[SpriteIdx.REACTOR_DEST]
                 dest_surf = pygame.transform.scale(dest_surf, (30, 10))
-                rect = dest_surf.get_rect(center=(int(TARGET_X), int(TARGET_Y)))
+                rect = dest_surf.get_rect(center=(int(target_x_render), int(target_y_render)))
                 self.screen.blit(dest_surf, rect)
 
             # Game Over
@@ -2521,7 +2826,7 @@ class JaxGravitar(JaxEnvironment):
             return (dummy_image,)
 
         # --------- JAX Branch ---------
-        out = self.renderer.render(env_state.state)
+        out = self.renderer.render(env_state)
         if out is None:
             frame = jnp.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=jnp.uint8)
         else:
@@ -2565,34 +2870,65 @@ class JaxGravitar(JaxEnvironment):
         # Index 0: All zeros (map/no terrain)
         bank = [np.zeros((H, W, 3), dtype=np.uint8)]
 
-        def sprite_to_mask(idx: int) -> np.ndarray:
+        BANK_IDX_TO_LEVEL_ID = {v: k for k, v in LEVEL_ID_TO_BANK_IDX.items()}
+
+        def sprite_to_mask(idx: int, bank_idx: int) -> np.ndarray: # 增加了 bank_idx 参数
             surf = self.sprites[SpriteIdx(idx)]
             tw, th = surf.get_width(), surf.get_height()
             scale = min(W / tw, H / th)
             extra = TERRANT_SCALE_OVERRIDES.get(SpriteIdx(idx), 1.0)
             scale *= float(extra)
             sw, sh = int(tw * scale), int(th * scale)
+            
             ox, oy = (W - sw) // 2, (H - sh) // 2
+            
+            level_id = BANK_IDX_TO_LEVEL_ID.get(bank_idx)
+            if level_id is not None:
+                level_offset = LEVEL_OFFSETS.get(level_id, (0, 0))
+                ox += level_offset[0]
+                oy += level_offset[1]
+
             scaled_surf = pygame.transform.scale(surf, (sw, sh))
 
             rgb_array = pygame.surfarray.pixels3d(scaled_surf)
             rgb_array_hwc = rgb_array.transpose((1, 0, 2))
 
             color_map = np.zeros((H, W, 3), dtype=np.uint8)
-            color_map[oy:oy+sh, ox:ox+sw] = rgb_array_hwc
+            
+            src_w, src_h = rgb_array_hwc.shape[1], rgb_array_hwc.shape[0]
+            dst_x, dst_y = max(ox, 0), max(oy, 0)
+            
+            src_x = abs(min(ox, 0))
+            src_y = abs(min(oy, 0))
+            
+            copy_w = min(W - dst_x, src_w - src_x)
+            copy_h = min(H - dst_y, src_h - src_y)
+            
+            if copy_w > 0 and copy_h > 0:
+                 color_map[dst_y:dst_y+copy_h, dst_x:dst_x+copy_w] = rgb_array_hwc[src_y:src_y+copy_h, src_x:src_x+copy_w]
 
             return color_map
 
         # 1..4：TERRANT1..4
-        bank.append(sprite_to_mask(int(SpriteIdx.TERRANT1)))
-        bank.append(sprite_to_mask(int(SpriteIdx.TERRANT2)))
-        bank.append(sprite_to_mask(int(SpriteIdx.TERRANT3)))
-        bank.append(sprite_to_mask(int(SpriteIdx.TERRANT4)))
-        bank.append(sprite_to_mask(int(SpriteIdx.REACTOR_TERR)))
+        terrains_to_build = [
+            (SpriteIdx.TERRANT1, 1),
+            (SpriteIdx.TERRANT2, 2),
+            (SpriteIdx.TERRANT3, 3),
+            (SpriteIdx.TERRANT4, 4),
+            (SpriteIdx.REACTOR_TERR, 5),
+        ]
+        
+        for sprite_idx, bank_idx in terrains_to_build:
+            bank.append(sprite_to_mask(int(sprite_idx), bank_idx))
 
         return jnp.array(np.stack(bank, axis=0), dtype=jnp.uint8)
 
-    def reset_map(self, key: jnp.ndarray, lives: Optional[int] = None, score: Optional[float] = None) -> Tuple[jnp.ndarray, EnvState]:  
+    def reset_map(self, key: jnp.ndarray, 
+                  lives: Optional[int] = None, 
+                  score: Optional[float] = None,
+                  reactor_destroyed: Optional[jnp.ndarray] = None,
+                  planets_cleared_mask: Optional[jnp.ndarray] = None
+                  ) -> Tuple[jnp.ndarray, EnvState]:   
         ship_state = ShipState(
             x=jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32),
             y=jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2, dtype=jnp.float32),
@@ -2605,12 +2941,23 @@ class JaxGravitar(JaxEnvironment):
         px_np, py_np, pr_np, pi_np = self.planets
         ids_np = [SPRITE_TO_LEVEL_ID.get(sprite_idx, -1) for sprite_idx in pi_np]
 
+        final_reactor_destroyed = reactor_destroyed if reactor_destroyed is not None else jnp.array(False)
+        final_cleared_mask = planets_cleared_mask if planets_cleared_mask is not None else jnp.zeros_like(self.planets[0], dtype=bool)
+
         env_state = EnvState(
             mode=jnp.int32(0),
             state=ship_state,
             bullets=create_empty_bullets_64(),
             cooldown=jnp.array(0, dtype=jnp.int32),
             enemies=create_empty_enemies(),
+            fuel_tanks=FuelTanks(           # Initialize an empty FuelTanks state for the map
+                x=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
+                y=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
+                w=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
+                h=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
+                sprite_idx=jnp.full(MAX_ENEMIES, -1, dtype=jnp.int32),
+                active=jnp.zeros(MAX_ENEMIES, dtype=bool),
+            ),
             enemy_bullets=create_empty_bullets_16(),
             fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
             key=key,
@@ -2649,8 +2996,8 @@ class JaxGravitar(JaxEnvironment):
             ufo_home_y=jnp.float32(0.0),
             ufo_bullets=create_empty_bullets_16(),
             level_offset=jnp.array([0, 0], dtype=jnp.float32),
-            reactor_destroyed=jnp.array(False),
-            planets_cleared_mask=jnp.zeros_like(self.planets[0], dtype=bool),
+            reactor_destroyed=final_reactor_destroyed,
+            planets_cleared_mask=final_cleared_mask,
         )
 
         obs = jnp.array([
@@ -2675,36 +3022,81 @@ class JaxGravitar(JaxEnvironment):
         
         level_offset = LEVEL_OFFSETS.get(level_id_int, (0, 0))
 
+        terrain_sprite_to_use = LEVEL_ID_TO_TERRAIN_SPRITE.get(level_id_int)
+        terr_surf = self.sprites[terrain_sprite_to_use]
+        tw, th = terr_surf.get_width(), terr_surf.get_height()
+        
+        scale = min(WINDOW_WIDTH / tw, WINDOW_HEIGHT / th)
+        extra = TERRANT_SCALE_OVERRIDES.get(terrain_sprite_to_use, 1.0)
+        scale *= float(extra)
+        
+        sw, sh = int(tw * scale), int(th * scale) # Final terrain size on screen
+        ox = (WINDOW_WIDTH - sw) // 2 + level_offset[0]  # Final top-left X on screen
+        oy = (WINDOW_HEIGHT - sh) // 2 + level_offset[1] # Final top-left Y on screen
+
         # === 2. Create all objects within the level (Enemies) ===
-        x_coords, y_coords, sprite_indices, flip_flags, hps = [], [], [], [], []
-        enemy_w, enemy_h, enemy_vx = 14.0, 14.0, 0.0
+        enemy_x, enemy_y, enemy_w, enemy_h, enemy_idx, enemy_hp = [], [], [], [], [], []
+        tank_x, tank_y, tank_w, tank_h, tank_idx = [], [], [], [], []
+        enemy_vx = 0.0
 
-        if layout_list:      # Only process if the layout list is not empty
+        if layout_list:
             for item in layout_list:
-                pos_ratio = item['pos_ratio']
+                coords = item['coords']
+                sprite_type = int(item['type'])
+
+                # Final screen position = terrain offset + (coord within terrain * terrain scale)
+                final_x = ox + coords[0] * scale
+                final_y = oy + coords[1] * scale
                 
-                x_coords.append(pos_ratio[0] * WINDOW_WIDTH)
-                y_coords.append(pos_ratio[1] * WINDOW_HEIGHT)
-                sprite_indices.append(int(item['type']))
-                flip_flags.append(item.get('flip_y', False)) 
-                hps.append(item.get('hp', 1))
+                # Get the original sprite index from the flipped version to fetch dimensions
+                original_sprite_idx = sprite_type
+                if sprite_type == SpriteIdx.ENEMY_ORANGE_FLIPPED:
+                    original_sprite_idx = SpriteIdx.ENEMY_ORANGE
+                
+                real_w, real_h = self.sprite_dims.get(original_sprite_idx, (14.0, 14.0))
 
-        num_enemies = len(x_coords)
+                # Divert the object to the correct list based on its type
+                if sprite_type == SpriteIdx.FUEL_TANK:
+                    tank_x.append(final_x)
+                    tank_y.append(final_y)
+                    tank_w.append(real_w)
+                    tank_h.append(real_h)
+                    tank_idx.append(sprite_type)
+
+                # All other types are considered enemies
+                else:
+                    enemy_x.append(final_x)
+                    enemy_y.append(final_y)
+                    enemy_w.append(real_w)
+                    enemy_h.append(real_h)
+                    enemy_idx.append(sprite_type)
+                    enemy_hp.append(item.get('hp', 1))
+
+        # Helper function to pad arrays to a fixed size
         def pad(arr, fill_val=0.0):
-            return jnp.pad(arr, (0, MAX_ENEMIES - arr.shape[0]), constant_values=fill_val)
+            return jnp.pad(jnp.array(arr), (0, MAX_ENEMIES - len(arr)), constant_values=fill_val)
 
+        # Create the Enemies object
         enemies = Enemies(
-            x=pad(jnp.array(x_coords, dtype=jnp.float32)),
-            y=pad(jnp.array(y_coords, dtype=jnp.float32)),
-            w=pad(jnp.full((num_enemies,), enemy_w)),
-            h=pad(jnp.full((num_enemies,), enemy_h)),
-            vx=pad(jnp.full((num_enemies,), enemy_vx)),
-            sprite_idx=pad(jnp.array(sprite_indices, dtype=jnp.int32), -1),
-            flip_y=pad(jnp.array(flip_flags, dtype=bool), False),            # Ensure the name matches your `Enemies` definition
-            death_timer=pad(jnp.zeros((num_enemies,), dtype=jnp.int32)),
-            hp=pad(jnp.array(hps, dtype=jnp.int32))
+            x=pad(enemy_x, -1.0),
+            y=pad(enemy_y, -1.0),
+            w=pad(jnp.array(enemy_w, dtype=jnp.float32)),           # Explicitly set dtype for JIT compatibility
+            h=pad(jnp.array(enemy_h, dtype=jnp.float32)),           # Explicitly set dtype for JIT compatibility
+            vx=pad(jnp.full((len(enemy_x),), enemy_vx)),
+            sprite_idx=pad(enemy_idx, -1),
+            death_timer=pad(jnp.zeros(len(enemy_x), dtype=jnp.int32)),
+            hp=pad(enemy_hp, 0)
         )
-        fire_cooldown = jnp.full((MAX_ENEMIES,), 999, dtype=jnp.int32).at[:num_enemies].set(0)
+
+        # Create the FuelTanks object
+        fuel_tanks = FuelTanks(
+            x=pad(tank_x, -1.0),
+            y=pad(tank_y, -1.0),
+            w=pad(jnp.array(tank_w, dtype=jnp.float32)),            # Explicitly set dtype for JIT compatibility
+            h=pad(jnp.array(tank_h, dtype=jnp.float32)),            # Explicitly set dtype for JIT compatibility
+            sprite_idx=pad(tank_idx, -1),
+            active=pad(jnp.ones(len(tank_x), dtype=bool), False)
+        )
 
         # === 3. Get level terrain data ===
         terrain_sprite_to_use = LEVEL_ID_TO_TERRAIN_SPRITE.get(level_id_int)
@@ -2716,6 +3108,12 @@ class JaxGravitar(JaxEnvironment):
         # === 4. Assemble the final EnvState ===
         ship_state = make_level_start_state(level_id_int)
         px_np, py_np, pr_np, pi_np = self.planets
+
+        # --- Define fixed coordinates for the reactor destination ---
+        #     to match the visual representation in the renderer.
+        reactor_target_x = 95
+        reactor_target_y = 114
+        # --- End definition ---
         
         env_state = EnvState(
             mode=jnp.int32(1),
@@ -2723,8 +3121,9 @@ class JaxGravitar(JaxEnvironment):
             bullets=create_empty_bullets_64(),
             cooldown=jnp.array(0, dtype=jnp.int32),
             enemies=enemies,
+            fuel_tanks=fuel_tanks,
             enemy_bullets=create_empty_bullets_16(),
-            fire_cooldown=fire_cooldown,
+            fire_cooldown=jnp.full((MAX_ENEMIES,), 60, dtype=jnp.int32),
             key=key,
             key_alt=key,
             score=prev_env_state.score,
@@ -2748,8 +3147,8 @@ class JaxGravitar(JaxEnvironment):
 
             respawn_shift_x=jnp.float32(0.0),
             reactor_dest_active=jnp.array(level_id_int == 4),
-            reactor_dest_x=jnp.float32(0.0),
-            reactor_dest_y=jnp.float32(0.0),
+            reactor_dest_x=jnp.float32(reactor_target_x),
+            reactor_dest_y=jnp.float32(reactor_target_y),
             reactor_dest_radius=jnp.float32(0.4),
             mode_timer=jnp.int32(0),
 
@@ -2768,6 +3167,7 @@ class JaxGravitar(JaxEnvironment):
         )
 
         obs = jnp.array([ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle])
+
         return obs, env_state
     
     
@@ -2776,74 +3176,128 @@ class JaxGravitar(JaxEnvironment):
         # This function converts the planet's sprite index into the corresponding terrain data
         terr_idx = map_planet_to_terrant(planet_idx_for_level)
         mask, scale, offset = self.build_terrain_mask_and_transform(int(terr_idx))
+
         return terr_idx, mask, scale, offset
 
     def step_full(self, env_state: EnvState, action: int):
-    
+        """
+        Executes a full step of the game logic, including handling resets.
+        This function is designed to be JIT-compiled and contains the main
+        state transition logic for the entire game.
+        """
         def _handle_reset(operands):
-
+            """This branch is executed only when the `reset` flag from step_core is True."""
             obs, current_state, reward, done, info, reset, level = operands
 
             def _enter_level(inner_operands):
+                """Handles the transition from the map to a specific level."""
                 _, state_to_reset, inner_reward, _, inner_info, _, inner_level = inner_operands
                 
+                # Wrapper for jax.pure_callback to call the Python-based reset_level method.
                 def _reset_level_py(key, level_val, state_val):
                     return self.reset_level(key, level_val, state_val)
 
+                # Prepare for the callback by splitting the PRNG key.
                 result_shape_and_dtype = self.reset_level_out_struct
                 new_main_key, subkey_for_reset = jax.random.split(state_to_reset.key)
                 
+                # Call the pure Python reset_level function from within the JIT-compiled graph.
                 obs_reset, next_state = jax.pure_callback(
                     _reset_level_py, result_shape_and_dtype,
                     subkey_for_reset, inner_level, state_to_reset
                 )
 
+                # Update the state with the new key and return.
                 next_state = next_state._replace(key=new_main_key)
-                enter_info = {**inner_info, "level_cleared": jnp.array(False)}
+                enter_info = {**info, "level_cleared": jnp.array(False)}
+
                 return obs_reset, next_state, inner_reward, jnp.array(False), enter_info, jnp.array(True), inner_level
 
             def _return_to_map(inner_operands):
+                """Handles the transition from a level back to the map, due to a win, loss, or crash."""
                 obs_map, state_to_reset, reward_map, _, info_map, _, level_map = inner_operands
+
+                # Determine if the return to map was caused by a death/crash event.
                 is_a_death_event = (level_map == -2) | info_map.get("crash", False) | info_map.get("hit_by_bullet", False) | info_map.get("reactor_crash_exit", False)
 
                 def _on_death(_):
+                    """Logic for when the player dies in a level."""
                     lives_next = state_to_reset.lives - 1
                     death_info = {**info_map, "level_cleared": jnp.array(False)}
+
                     def _game_over(_):
+                        """If no lives are left, set the 'done' flag."""
                         game_over_state = state_to_reset._replace(lives=jnp.int32(0), done=jnp.array(True))
+                    
                         return obs_map, game_over_state, reward_map, jnp.array(True), death_info, jnp.array(True), level_map
+                
                     def _lose_life(_):
+                        """If lives remain, reset to the map, preserving score and cleared status."""
                         new_main_key, subkey_for_reset = jax.random.split(state_to_reset.key)
-                        obs_reset, map_state = self.reset_map(subkey_for_reset, lives=lives_next, score=state_to_reset.score)
+
+                        obs_reset, map_state = self.reset_map(
+                            subkey_for_reset, 
+                            lives=lives_next, 
+                            score=state_to_reset.score,
+                            reactor_destroyed=state_to_reset.reactor_destroyed,
+                            planets_cleared_mask=state_to_reset.planets_cleared_mask
+                        )
+
                         map_state = map_state._replace(key=new_main_key)
+
                         return obs_reset, map_state, reward_map, jnp.array(False), death_info, jnp.array(True), level_map
+                    
                     return jax.lax.cond(lives_next <= 0, _game_over, _lose_life, operand=None)
 
                 def _on_win(_):
+                    """Logic for when the player successfully completes a level."""
                     new_main_key, subkey_for_reset = jax.random.split(state_to_reset.key)
-                    obs_reset, map_state = self.reset_map(subkey_for_reset, lives=state_to_reset.lives, score=state_to_reset.score)
+
+                    obs_reset, map_state = self.reset_map(
+                        subkey_for_reset, 
+                        lives=state_to_reset.lives, 
+                        score=state_to_reset.score,
+                        reactor_destroyed=state_to_reset.reactor_destroyed,
+                        planets_cleared_mask=state_to_reset.planets_cleared_mask
+                    )
+
                     map_state = map_state._replace(key=new_main_key)
+
                     win_info = {**info_map, "level_cleared": jnp.array(True)}
+
                     return obs_reset, map_state, reward_map, jnp.array(False), win_info, jnp.array(True), level_map
 
                 return jax.lax.cond(is_a_death_event, _on_death, _on_win, operand=None)
-
+            
+            # Main switch for handling resets: either enter a level or return to the map.
             return jax.lax.cond(level >= 0, _enter_level, _return_to_map, operand=operands)
 
         def _no_reset(operands):
+            """This branch is executed if the `reset` flag from step_core is False."""
             obs, new_env_state, reward, done, info, reset, level = operands
+
+            # Ensure the info dict has a consistent structure.
             no_reset_info = {**info, "level_cleared": jnp.array(False)}
+
             return obs, new_env_state, reward, done, no_reset_info, reset, level
 
+        # 1. Execute the core game logic for one frame.
         obs, new_env_state, reward, done, info, reset, level = step_core(env_state, action)
         
+        # 2. Package the results to be passed to the conditional branches.
         operands = (obs, new_env_state, reward, done, info, reset, level)
 
+        # 3. Based on the `reset` flag, decide whether to handle a state transition or continue.
         return jax.lax.cond(reset, _handle_reset, _no_reset, operands)
             
     def step(self, env_state: EnvState, action: int):
+        """
+        The public-facing step function. It wraps the JIT-compiled step_full,
+        and converts JAX array outputs (reward, done) to standard Python types.
+        """
         obs, ns, reward, done, info, _reset, _level = self.step_full(env_state, action)
 
+        # Convert JAX arrays to Python scalars for compatibility with standard RL interfaces.
         try:
             reward = float(reward.item() if hasattr(reward, "item") else reward)
         except Exception:
@@ -2906,21 +3360,25 @@ class GravitarRenderer(JAXGameRenderer):
     @partial(jax.jit, static_argnames=('self',))
     def render(self, state: EnvState) -> jnp.ndarray:
         H, W = self.height, self.width
+        # Start with a black frame for each render cycle.
         frame = jnp.zeros((H, W, 3), dtype=jnp.uint8)
 
-        # --- 1. Draw map elements (only in map mode) ---
+        # 1. Draw map elements
         def draw_map_elements(f):
             def draw_one_planet(i, frame_carry):
                 sprite_idx = state.planets_pi[i]
                 x, y = state.planets_px[i], state.planets_py[i]
                 
-                is_cleared = state.planets_cleared_mask[i]
+                # Conditions to check before drawing a map object.
+                is_planet_cleared = (i < state.planets_cleared_mask.shape[0]) & state.planets_cleared_mask[i]
                 is_reactor_and_destroyed = (sprite_idx == int(SpriteIdx.REACTOR)) & state.reactor_destroyed
-                should_draw = ~(is_cleared | is_reactor_and_destroyed)
+                should_draw = ~(is_planet_cleared | is_reactor_and_destroyed)
 
                 def perform_blit(fc):
+                    # Safely select the correct blit function and draw the sprite.
                     safe_idx = jnp.clip(sprite_idx, 0, len(self.blit_branches) - 1)
                     branches = tuple(lambda op, b=b: b(op[0], op[1], op[2]) for b in self.blit_branches)
+
                     return jax.lax.switch(safe_idx, branches, (fc, x, y))
                 
                 return jax.lax.cond(should_draw, perform_blit, lambda fc: fc, frame_carry)
@@ -2928,66 +3386,132 @@ class GravitarRenderer(JAXGameRenderer):
             return jax.lax.fori_loop(0, state.planets_pi.shape[0], draw_one_planet, f)
         frame = jax.lax.cond(state.mode == 0, draw_map_elements, lambda f: f, frame)
 
-        # --- 2. Draw terrain (only in level mode) ---
+        # === 2. Draw Terrain (only in level mode) ===
         def draw_level_terrain(f):
+            # Select the correct pre-rendered terrain map from the bank.
             bank_idx = jnp.clip(state.terrain_bank_idx, 0, state.terrain_bank.shape[0] - 1)
             terrain_map = state.terrain_bank[bank_idx]
+            # Draw the terrain map wherever its pixels are not black.
             is_terrain_pixel = jnp.sum(terrain_map, axis=-1) > 0
+
             return jnp.where(is_terrain_pixel[..., None], terrain_map, f)
+        
         frame = jax.lax.cond(state.mode == 1, draw_level_terrain, lambda f: f, frame)
 
-        # --- 3. Draw enemies (only in level mode) ---
+        # === 3. Draw Level Actors (Enemies, Fuel Tanks, UFO) ===
         def draw_enemies(f):
             def draw_enemy_func(i, current_frame):
                 is_alive = state.enemies.w[i] > 0
+                is_exploding = state.enemies.death_timer[i] > 0
+
                 sprite_idx = state.enemies.sprite_idx[i]
                 x, y = state.enemies.x[i], state.enemies.y[i]
                 
+                def perform_blit(sprite_id, frame_in):
+                    safe_idx = jnp.clip(sprite_id, 0, len(self.blit_branches) - 1)
+                    branches = tuple(lambda op, b=b: b(op[0], op[1], op[2]) for b in self.blit_branches)
+
+                    return jax.lax.switch(safe_idx, branches, (frame_in, x, y))
+
+                # Draw either the alive sprite or nothing.
+                frame_alive = jax.lax.cond(is_alive & ~is_exploding, lambda f_in: perform_blit(sprite_idx, f_in), lambda f_in: f_in, current_frame)
+                # On top of that, draw the explosion if the enemy is exploding.
+                frame_exploding = jax.lax.cond(is_exploding, lambda f_in: perform_blit(int(SpriteIdx.ENEMY_CRASH), f_in), lambda f_in: f_in, frame_alive)
+
+                return frame_exploding
+            return jax.lax.fori_loop(0, MAX_ENEMIES, draw_enemy_func, f)
+        
+        def draw_fuel_tanks(f):
+            def draw_tank_func(i, current_frame):
+                # 1. Read data from the state.fuel_tanks field
+                is_active = state.fuel_tanks.active[i]
+                sprite_idx = state.fuel_tanks.sprite_idx[i]
+                x, y = state.fuel_tanks.x[i], state.fuel_tanks.y[i]
+                
+                # 2. Define the blit function
                 def perform_blit(frame_in):
                     safe_idx = jnp.clip(sprite_idx, 0, len(self.blit_branches) - 1)
                     branches = tuple(lambda op, b=b: b(op[0], op[1], op[2]) for b in self.blit_branches)
                     return jax.lax.switch(safe_idx, branches, (frame_in, x, y))
                 
-                # It should pass `current_frame` through.
-                return jax.lax.cond(is_alive, perform_blit, lambda f_in: f_in, current_frame)
-            return jax.lax.fori_loop(0, MAX_ENEMIES, draw_enemy_func, f)
-        
+                # 3. Only draw the tank if it is active
+                return jax.lax.cond(is_active, perform_blit, lambda f_in: f_in, current_frame)
+            
+            # Iterate through all possible tank slots
+            return jax.lax.fori_loop(0, MAX_ENEMIES, draw_tank_func, f)
+
         def draw_ufo(f):
             ufo = state.ufo
-            def perform_blit(frame_in):
+            
+            def draw_alive_ufo(frame_in):
                 blit_func = self.blit_branches[int(SpriteIdx.ENEMY_UFO)]
                 return blit_func(frame_in, ufo.x, ufo.y)
-            return jax.lax.cond(ufo.alive, perform_blit, lambda f_in: f_in, f)
 
-        # In level mode, draw enemies and UFO
+            def draw_ufo_explosion(frame_in):
+                blit_func = self.blit_branches[int(SpriteIdx.ENEMY_CRASH)]
+                return blit_func(frame_in, ufo.x, ufo.y)
+
+            # First, attempt to draw the alive UFO
+            frame_after_alive = jax.lax.cond(ufo.alive, draw_alive_ufo, lambda f_in: f_in, f)
+            # Then, on top of that, attempt to draw the explosion if its timer is active
+            final_frame = jax.lax.cond(ufo.death_timer > 0, draw_ufo_explosion, lambda f_in: f_in, frame_after_alive)
+
+            return final_frame
+
+        # Combine all level actor drawing functions into one group.
         def draw_level_actors(f):
             frame_with_enemies = draw_enemies(f)
-            frame_with_ufo = draw_ufo(frame_with_enemies)
+            frame_with_tanks = draw_fuel_tanks(frame_with_enemies)
+            frame_with_ufo = draw_ufo(frame_with_tanks)
+
             return frame_with_ufo
         
+        # This group is only executed in level mode.
         frame = jax.lax.cond(state.mode == 1, draw_level_actors, lambda f: f, frame)
-
+        
+        # === 3.5. Draw Saucer and Reactor Destination ===
         def draw_saucer(f):
             saucer = state.saucer
-            # Check if the Saucer is alive
-            def perform_blit(frame_in):
+            
+            def draw_alive_saucer(frame_in):
                 blit_func = self.blit_branches[int(SpriteIdx.ENEMY_SAUCER)]
                 return blit_func(frame_in, saucer.x, saucer.y)
 
-            return jax.lax.cond(saucer.alive, perform_blit, lambda f_in: f_in, f)
+            def draw_saucer_explosion(frame_in):
+                blit_func = self.blit_branches[int(SpriteIdx.SAUCER_CRASH)]
+                return blit_func(frame_in, saucer.x, saucer.y)
+
+            # Similar to UFO, use a chained conditional draw
+            frame_after_alive = jax.lax.cond(saucer.alive, draw_alive_saucer, lambda f_in: f_in, f)
+            final_frame = jax.lax.cond(saucer.death_timer > 0, draw_saucer_explosion, lambda f_in: f_in, frame_after_alive)
+
+            return final_frame
         
-        # Only draw in mode 0 (map) or 2 (arena)
+        # Saucer is only drawn in map or arena mode.
         frame = jax.lax.cond((state.mode == 0) | (state.mode == 2), draw_saucer, lambda f: f, frame)
         
-        # --- 4. Draw bullets ---
+        def draw_reactor_destination(f):
+            blit_func = self.blit_branches[int(SpriteIdx.REACTOR_DEST)]
+
+            return blit_func(f, state.reactor_dest_x, state.reactor_dest_y)
+        
+        # The destination is only drawn under specific conditions.
+        should_draw_destination = (state.mode == 1) & (state.terrain_sprite_idx == int(SpriteIdx.REACTOR_TERR)) & state.reactor_dest_active
+        frame = jax.lax.cond(should_draw_destination, draw_reactor_destination, lambda f: f, frame)
+
+        # === 4. Draw Bullets ===
         def draw_bullets_func(bullets, sprite_idx, current_frame):
             blit_func = self.blit_branches[sprite_idx]
+
             def draw_one_bullet(i, f):
                 x, y = bullets.x[i], bullets.y[i]
                 is_alive = bullets.alive[i]
+
                 return jax.lax.cond(is_alive, lambda frame_in: blit_func(frame_in, x, y), lambda frame_in: frame_in, f)
+            
             return jax.lax.fori_loop(0, bullets.x.shape[0], draw_one_bullet, current_frame)
         
+        # Draw all types of bullets.
         frame = draw_bullets_func(state.bullets, int(SpriteIdx.SHIP_BULLET), frame)
         frame = draw_bullets_func(state.enemy_bullets, int(SpriteIdx.ENEMY_BULLET), frame)
         frame = draw_bullets_func(state.ufo_bullets, int(SpriteIdx.ENEMY_BULLET), frame)
@@ -2995,20 +3519,25 @@ class GravitarRenderer(JAXGameRenderer):
         # --- 5. Draw the ship ---
         ship_state = state.state
         is_crashing = state.crash_timer > 0
-        velocity_sq = ship_state.vx**2 + ship_state.vy**2
-        is_thrusting = velocity_sq > 0.01
         
-        ship_sprite_data = jax.lax.select(is_crashing, self.padded_ship_crash,
-                                        jax.lax.select(is_thrusting, self.padded_ship_thrust, self.padded_ship_idle))
+        # Select the appropriate sprite based on the ship's state.
+        ship_sprite_data = jax.lax.select(is_crashing, 
+                                self.padded_ship_crash, 
+                                self.padded_ship_idle)
         
-        angle_deg = -jnp.degrees(ship_state.angle) - 90.0
+        # Rotate the ship sprite according to its physical angle.
+        angle_deg = jnp.degrees(ship_state.angle) + 90.0
         rotated_ship_rgba = _jax_rotate(ship_sprite_data, angle_deg, reshape=False)
         
+        # Blit the rotated ship onto the frame
         ship_h, ship_w, _ = rotated_ship_rgba.shape
         ship_rgb = rotated_ship_rgba[..., :3]; ship_alpha = (rotated_ship_rgba[..., 3] / 255.0)[..., None]
+
         start_x = jnp.round(ship_state.x - ship_w / 2).astype(jnp.int32)
         start_y = jnp.round(ship_state.y - ship_h / 2).astype(jnp.int32)
 
+        # Safe blitting logic to handle cases where the sprite is partially off-screen
+        # (This is a simplified version; for full safety, more complex slicing is needed)
         target_patch = jax.lax.dynamic_slice(frame, (start_y, start_x, 0), (ship_h, ship_w, 3))
         blended_patch = ship_rgb * ship_alpha + target_patch * (1 - ship_alpha)
         frame = jax.lax.dynamic_update_slice(frame, blended_patch.astype(jnp.uint8), (start_y, start_x, 0))
@@ -3028,8 +3557,8 @@ class GravitarRenderer(JAXGameRenderer):
             
             def draw_one_digit(i, frame_carry):
                 sprite_idx = digits[i] + int(SpriteIdx.DIGIT_0)
-                # Calculate position starting from the right border
-                x_pos = W - RIGHT_MARGIN - (6 - i) * DIGIT_WIDTH
+                # Calculate position from the right edge of the screen
+                x_pos = W - RIGHT_MARGIN - (6 - i) * DIGIT_WIDTH    
                 y_pos = Y_SCORE
                 
                 operand = (frame_carry, x_pos, y_pos)
@@ -3044,15 +3573,18 @@ class GravitarRenderer(JAXGameRenderer):
             hp_blit_func = self.blit_branches[int(SpriteIdx.HP_UI)]
             def draw_one_life(i, frame_carry):
                 is_active = i < state.lives
+
                 # Also calculate position starting from the right border
-                x_pos = W - RIGHT_MARGIN - (MAX_LIVES - i) * HP_WIDTH
+                x_pos = W - RIGHT_MARGIN - (MAX_LIVES - i) * HP_WIDTH    # Corrected positioning
                 y_pos = Y_LIVES # Use the new Y-coordinate to ensure it's below the score
+
                 return jax.lax.cond(is_active, lambda fc: hp_blit_func(fc, x_pos, y_pos), lambda fc: fc, frame_carry)
             
             lives_frame = jax.lax.fori_loop(0, MAX_LIVES, draw_one_life, score_frame)
+            
             return lives_frame
         
-        frame = jax.lax.cond(state.mode < 2, draw_hud, lambda f: f, frame)
+        frame = draw_hud(frame)
 
         return frame
 

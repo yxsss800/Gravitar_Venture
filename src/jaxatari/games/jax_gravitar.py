@@ -2103,23 +2103,16 @@ class JaxGravitar(JaxEnvironment):
         self.num_planets = len(px)
         self.terrain_bank = self._build_terrain_bank()
 
-        # ========== 新增代码块开始 ==========
-        # 为 pure_callback 提前准备好 reset_level 函数的输出结构模板
-        # 这样就不需要在 JIT 编译的 step 函数内部去计算它了
-        print("Pre-computing reset_level output structure for JAX callback...")
         dummy_key = jax.random.PRNGKey(0)
-        # 使用 self.reset() 来获得一个合法的初始 env_state 用于模板生成
+
         _, dummy_state = self.reset(dummy_key) 
-        # 用一个有效的 level_id (比如0) 和虚拟状态来调用一次 reset_level
+
         tmp_obs, tmp_state = self.reset_level(dummy_key, 0, dummy_state)
-        # 将结果的结构保存为类的属性
+
         self.reset_level_out_struct = (
             jax.ShapeDtypeStruct(tmp_obs.shape, tmp_obs.dtype),
             jax.tree_util.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), tmp_state)
         )
-        print("Structure pre-computation complete.")
-        # ========== 新增代码块结束 ==========
-
 
     def action_space(self):
         # The `spaces.Discrete` space from the tutorial supports `sample(key)`

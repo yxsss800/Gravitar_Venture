@@ -2584,8 +2584,7 @@ class JaxGravitar(JaxEnvironment):
             done = bool(done.item() if hasattr(done, "item") else done)
         except Exception: pass
 
-        reward_dict = info['all_rewards']
-        return obs, ns, reward_dict, done, info
+        return obs, ns, reward, done, info
 
     def action_space(self) -> spaces.Discrete:
         return spaces.Discrete(self.num_actions)

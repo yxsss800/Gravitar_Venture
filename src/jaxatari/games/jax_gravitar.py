@@ -1428,7 +1428,14 @@ def step_map(env_state: EnvState, action: int):
         "crash": start_crash,
         "hit_by_bullet": hit_ship_by_bullet,
         "reactor_crash_exit": jnp.array(False),
-        "all_rewards": {"saucer_kill": reward_saucer, "penalty": reward_penalty}, 
+        "all_rewards": {
+            "enemies": jnp.float32(0.0),    
+            "reactor": jnp.float32(0.0),   
+            "ufo": jnp.float32(0.0),        
+            "tanks": jnp.float32(0.0),      
+            "saucer_kill": reward_saucer,
+            "penalty": reward_penalty,
+        },
     }
     
     new_env = new_env._replace(score=new_env.score + reward) 
@@ -1662,6 +1669,8 @@ def _step_level_core(env_state: EnvState, action: int):
         "reactor": score_from_reactor,
         "ufo": score_from_ufo,
         "tanks": score_from_tanks,
+        "saucer_kill": jnp.float32(0.0),  
+        "penalty": jnp.float32(0.0), 
     }
     # d) Crash and respawn logic
     was_crashing = state_after_ufo.crash_timer > 0
@@ -2079,10 +2088,17 @@ def step_arena(env_state: EnvState, action: int):
     obs = jnp.array([ship_after_move.x, ship_after_move.y, ship_after_move.vx, ship_after_move.vy, ship_after_move.angle])
     reward = jnp.where(just_died, 300.0, 0.0)
     info = {
-        "crash": start_crash,
+        "crash": start_crash, 
         "hit_by_bullet": hit_ship_by_bullet,
-        "reactor_crash_exit": jnp.array(False),
-        "all_rewards": {"saucer_kill": reward}, 
+        "reactor_crash_exit": jnp.array(False), 
+        "all_rewards": {
+            "enemies": jnp.float32(0.0),   
+            "reactor": jnp.float32(0.0),   
+            "ufo": jnp.float32(0.0),         
+            "tanks": jnp.float32(0.0),     
+            "saucer_kill": reward,
+            "penalty": jnp.float32(0.0),      
+        },
     }
 
     final_env_state = env_state._replace(

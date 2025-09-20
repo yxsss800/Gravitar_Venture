@@ -2274,7 +2274,16 @@ def step_core(env_state: EnvState, action: int):
         info = {
             "crash": jnp.array(False), 
             "hit_by_bullet": jnp.array(False),
-            "reactor_crash_exit": jnp.array(False), 
+            "reactor_crash_exit": jnp.array(False),
+            
+            "all_rewards": {
+                "enemies": jnp.float32(0.0),
+                "reactor": jnp.float32(0.0),
+                "ufo": jnp.float32(0.0),
+                "tanks": jnp.float32(0.0),
+                "saucer_kill": jnp.float32(0.0),
+                "penalty": jnp.float32(0.0),
+            },
         }
         
         # 2. Return a tuple with the same pytree structure as the other branch.

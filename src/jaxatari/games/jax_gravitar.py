@@ -2448,27 +2448,40 @@ class JaxGravitar(JaxEnvironment):
         super().__init__()
         self.obs_shape = (5,)
         self.num_actions = 18
-        self.render_backend = render_backend # 保留这个，因为它可能被使用
+        self.render_backend = render_backend
 
-        # 初始化 Pygame 用于加载资源，即使是无头模式
+        # ---- Pygame 和渲染器初始化 (核心修复) ----
         pygame.init()
-        pygame.display.set_mode((1, 1), pygame.NOFRAME)
+        pygame.font.init()  # 需要初始化字体模块
+        
+        # 即使在 CI/无头模式下，也需要创建 self.screen 实例
+        self.screen_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.screen = pygame.display.set_mode(self.screen_size)
+        
+        # 初始化 JAX 渲染器
+        self.renderer = GravitarRenderer(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
+        
+        # 加载 Pygame 精灵（用于 Pygame 渲染分支）
         self.sprites = load_sprites_tuple()
 
-        # --- 存储精灵的原始尺寸 ---
-        # 这对于在 reset_level 中计算对象大小是必需的
+        # 保留一些 Pygame 渲染需要用到的状态变量
+        self.score = 0
+        self.lives = MAX_LIVES
+        # ----------------------------------------------
+
+        # --- 存储精灵的原始尺寸 (这部分保持不变) ---
         self.sprite_dims = {}
         sprites_to_measure = [
             SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN,
             SpriteIdx.FUEL_TANK, SpriteIdx.ENEMY_UFO,
-            SpriteIdx.ENEMY_ORANGE_FLIPPED, # 确保也包含这个
+            SpriteIdx.ENEMY_ORANGE_FLIPPED,
         ]
         for sprite_idx in sprites_to_measure:
             sprite_surf = self.sprites[sprite_idx]
             if sprite_surf:
                 self.sprite_dims[int(sprite_idx)] = (sprite_surf.get_width(), sprite_surf.get_height())
 
-        # --- 地图布局和碰撞半径的预计算 ---
+        # --- 地图布局和碰撞半径的预计算 (这部分保持不变) ---
         MAP_SCALE = 3
         HITBOX_SCALE = 0.90
         layout = [
@@ -2483,51 +2496,41 @@ class JaxGravitar(JaxEnvironment):
             spr = self.sprites[idx]
             if spr:
                 r = 8.0 / WORLD_SCALE if idx == SpriteIdx.OBSTACLE else 0.3 * max(spr.get_width(), spr.get_height()) * MAP_SCALE * HITBOX_SCALE
-            else:
-                r = 4
+            else: r = 4
             px.append(cx); py.append(cy); pr.append(r); pi.append(int(idx))
         self.planets = (np.array(px, dtype=np.float32), np.array(py, dtype=np.float32), np.array(pr, dtype=np.float32), np.array(pi, dtype=np.int32))
         
-        # 预先构建地形图层库
         self.terrain_bank = self._build_terrain_bank()
 
-        # ========== 将所有关卡数据转换为 JAX 数组 (核心修复) ==========
+        # --- 将关卡数据转换为 JAX 数组 (这部分保持不变) ---
         num_levels = max(LEVEL_LAYOUTS.keys()) + 1
         max_objects = max(len(v) for v in LEVEL_LAYOUTS.values()) if LEVEL_LAYOUTS else 0
-
         layout_types = np.full((num_levels, max_objects), -1, dtype=np.int32)
         layout_coords_x = np.zeros((num_levels, max_objects), dtype=np.float32)
         layout_coords_y = np.zeros((num_levels, max_objects), dtype=np.float32)
-
         for level_id, layout_data in LEVEL_LAYOUTS.items():
             for i, obj in enumerate(layout_data):
                 layout_types[level_id, i] = obj['type']
                 layout_coords_x[level_id, i] = obj['coords'][0]
                 layout_coords_y[level_id, i] = obj['coords'][1]
-        
         self.jax_layout = {
             "types": jnp.array(layout_types),
             "coords_x": jnp.array(layout_coords_x),
             "coords_y": jnp.array(layout_coords_y),
         }
-
         max_sprite_id = max(int(e) for e in SpriteIdx)
         dims_array = np.zeros((max_sprite_id + 1, 2), dtype=np.float32)
         for k, v in self.sprite_dims.items():
             dims_array[k] = v
         self.jax_sprite_dims = jnp.array(dims_array)
-
         level_ids_sorted = sorted(LEVEL_ID_TO_TERRAIN_SPRITE.keys())
         self.jax_level_to_terrain = jnp.array([LEVEL_ID_TO_TERRAIN_SPRITE[k] for k in level_ids_sorted])
         self.jax_level_to_bank = jnp.array([LEVEL_ID_TO_BANK_IDX[k] for k in level_ids_sorted])
         self.jax_level_offsets = jnp.array([LEVEL_OFFSETS[k] for k in level_ids_sorted])
-        # =================================================================
 
-        # ---- JIT 辅助初始化 ----
-        # 这是为了让 jax.pure_callback 知道 reset_level 函数的输出形状和类型
+        # ---- JIT 辅助初始化 (这部分保持不变) ----
         dummy_key = jax.random.PRNGKey(0)
         _, dummy_state = self.reset(dummy_key)
-        # 我们需要用一个 jax 数组作为 level_id 来调用，以模拟 JIT 环境
         tmp_obs, tmp_state = self.reset_level(dummy_key, jnp.int32(0), dummy_state) 
         self.reset_level_out_struct = (
             jax.ShapeDtypeStruct(tmp_obs.shape, tmp_obs.dtype),

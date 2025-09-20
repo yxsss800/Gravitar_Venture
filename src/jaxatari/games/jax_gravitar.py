@@ -2523,19 +2523,59 @@ class JaxGravitar(JaxEnvironment):
         # This function is already correct. No changes needed.
         return spaces.Discrete(self.num_actions)
     
-    # --- 在这里添加新的、正确的 observation_space 函数 ---
     def observation_space(self):
         """Returns the observation space of the environment."""
-        # The observation is a vector of 5 floating-point numbers:
-        # [x, y, vx, vy, angle]
-        # We use a Box space to define this.
-        # low=-inf, high=+inf means the values are unbounded.
+        # Define reasonable, finite bounds for the observation space.
+        low = jnp.array([
+            0.0, 0.0, -10.0, -10.0, -jnp.pi
+        ], dtype=jnp.float32)
+        
+        high = jnp.array([
+            float(WINDOW_WIDTH), float(WINDOW_HEIGHT), 10.0, 10.0, jnp.pi
+        ], dtype=jnp.float32)
+
         return spaces.Box(
-            low=-jnp.inf, 
-            high=jnp.inf, 
-            shape=self.obs_shape, # This correctly uses your self.obs_shape = (5,)
+            low=low,
+            high=high,
+            shape=self.obs_shape,
             dtype=jnp.float32
         )
+
+    def image_space(self) -> spaces.Box:
+        """Returns the image space of the environment."""
+        # This defines the properties of the image returned by the render() method.
+        return spaces.Box(
+            low=0,
+            high=255,
+            shape=(WINDOW_HEIGHT, WINDOW_WIDTH, 3),
+            dtype=jnp.uint8
+        )
+
+    def obs_to_flat_array(self, obs: jnp.ndarray) -> jnp.ndarray:
+        """
+        Converts the observation to a flat 1D array.
+        Since our observation is already a 1D vector, we just return it.
+        """
+        return obs
+    
+    def get_object_centric_obs(self, state: EnvState) -> Dict[str, jnp.ndarray]:
+        """
+        Gravitar does not currently support object-centric observations.
+        This method is implemented to satisfy the abstract base class requirements.
+        """
+        raise NotImplementedError("Gravitar does not support object-centric observations.")
+
+    def get_ram(self, state: EnvState) -> jnp.ndarray:
+        """
+        Gravitar does not have a direct RAM equivalent.
+        This method returns a placeholder to satisfy the abstract base class requirements.
+        """
+        # Return a zero-filled array with the standard Atari RAM shape.
+        return jnp.zeros(128, dtype=jnp.uint8)
+
+    def get_ale_lives(self, state: EnvState) -> jnp.ndarray:
+        """Returns the current number of lives from the environment state."""
+        return state.lives
 
     def render(self, env_state: EnvState) -> Tuple[jnp.ndarray]:
         # --------- pygame  ---------

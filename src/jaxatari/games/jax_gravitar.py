@@ -1421,13 +1421,14 @@ def step_map(env_state: EnvState, action: int):
     
     obs = jnp.array([new_env.state.x, new_env.state.y, new_env.state.vx, new_env.state.vy, new_env.state.angle])
     
-    reward = jnp.where(just_died, jnp.float32(300.0), jnp.float32(0.0))
-    reward = jnp.where(start_crash & ~hit_obstacle, reward - 10.0, reward)
-
+    reward_saucer = jnp.where(just_died, jnp.float32(300.0), jnp.float32(0.0))
+    reward_penalty = jnp.where(start_crash & ~hit_obstacle, -10.0, 0.0)
+    reward = reward_saucer + reward_penalty
     info = {
-        "crash": start_crash, 
+        "crash": start_crash,
         "hit_by_bullet": hit_ship_by_bullet,
         "reactor_crash_exit": jnp.array(False),
+        "all_rewards": {"saucer_kill": reward_saucer, "penalty": reward_penalty}, 
     }
     
     new_env = new_env._replace(score=new_env.score + reward) 
@@ -1656,6 +1657,12 @@ def _step_level_core(env_state: EnvState, action: int):
     score_from_ufo = jnp.where(ufo_just_died, 100.0, 0.0)
     score_delta = score_from_enemies + score_from_reactor + score_from_ufo + score_from_tanks
 
+    all_rewards = {
+        "enemies": score_from_enemies,
+        "reactor": score_from_reactor,
+        "ufo": score_from_ufo,
+        "tanks": score_from_tanks,
+    }
     # d) Crash and respawn logic
     was_crashing = state_after_ufo.crash_timer > 0
     start_crash = dead & (~was_crashing)
@@ -1731,7 +1738,8 @@ def _step_level_core(env_state: EnvState, action: int):
     info = {
         "crash": start_crash,
         "hit_by_bullet": hit_by_enemy_bullet | hit_by_ufo_bullet,
-        "reactor_crash_exit": reset_from_reactor_crash, 
+        "reactor_crash_exit": reset_from_reactor_crash,
+        "all_rewards": all_rewards,  
     }
     reward = score_delta                # Let reward equal the score change
 
@@ -2069,12 +2077,12 @@ def step_arena(env_state: EnvState, action: int):
     
     # --- 6. Assemble and Return ---
     obs = jnp.array([ship_after_move.x, ship_after_move.y, ship_after_move.vx, ship_after_move.vy, ship_after_move.angle])
-    reward = jnp.where(just_died, 300.0, 0.0) 
-    
+    reward = jnp.where(just_died, 300.0, 0.0)
     info = {
-        "crash": start_crash, 
+        "crash": start_crash,
         "hit_by_bullet": hit_ship_by_bullet,
-        "reactor_crash_exit": jnp.array(False), 
+        "reactor_crash_exit": jnp.array(False),
+        "all_rewards": {"saucer_kill": reward}, 
     }
 
     final_env_state = env_state._replace(
@@ -2448,13 +2456,13 @@ class JaxGravitar(JaxEnvironment):
         self.obs_shape = (5,)
         self.num_actions = 18
 
-        # ---- 资源加载与 JAX 渲染器初始化 ----
+        # ---- Resource Loading and JAX Renderer Initialization ----
         pygame.init()
         pygame.display.set_mode((1, 1), pygame.NOFRAME)
         self.sprites = load_sprites_tuple()
         self.renderer = GravitarRenderer(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
         
-        # --- 存储精灵的原始尺寸 ---
+        # --- Store original sprite dimensions ---
         self.sprite_dims = {}
         sprites_to_measure = [
             SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN,
@@ -2466,7 +2474,7 @@ class JaxGravitar(JaxEnvironment):
             if sprite_surf:
                 self.sprite_dims[int(sprite_idx)] = (sprite_surf.get_width(), sprite_surf.get_height())
 
-        # --- 地图布局和碰撞半径 ---
+        # --- Map layout and collision radii ---
         MAP_SCALE = 3
         HITBOX_SCALE = 0.90
         layout = [
@@ -2486,7 +2494,7 @@ class JaxGravitar(JaxEnvironment):
         self.planets = (np.array(px, dtype=np.float32), np.array(py, dtype=np.float32), np.array(pr, dtype=np.float32), np.array(pi, dtype=np.int32))
         self.terrain_bank = self._build_terrain_bank()
 
-        # --- 将所有关卡数据转换为 JAX 数组 ---
+        # --- Convert all level data to JAX arrays ---
         num_levels = max(LEVEL_LAYOUTS.keys()) + 1
         max_objects = max(len(v) for v in LEVEL_LAYOUTS.values()) if LEVEL_LAYOUTS else 0
         layout_types = np.full((num_levels, max_objects), -1, dtype=np.int32)
@@ -2525,7 +2533,7 @@ class JaxGravitar(JaxEnvironment):
             level_transforms[level_id] = [scale, ox, oy]
         self.jax_level_transforms = jnp.array(level_transforms)
         
-        # ---- JIT 辅助初始化 ----
+        # ---- JIT Helper Initialization ----
         dummy_key = jax.random.PRNGKey(0)
         _, dummy_state = self.reset(dummy_key)
         tmp_obs, tmp_state = self.reset_level(dummy_key, jnp.int32(0), dummy_state) 
@@ -2534,8 +2542,7 @@ class JaxGravitar(JaxEnvironment):
             jax.tree_util.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), tmp_state)
         )
 
-    # === 核心修正 1: 实现所有必需的抽象方法 ===
-
+    # === Core Fix 1: Implement all required abstract methods ===
     def reset(self, key: jnp.ndarray) -> Tuple[jnp.ndarray, EnvState]:
         """Implements the main reset entry point of the environment."""
         return self.reset_map(key)
@@ -2566,8 +2573,17 @@ class JaxGravitar(JaxEnvironment):
     def obs_to_flat_array(self, obs: jnp.ndarray) -> jnp.ndarray:
         return obs
 
+    def object_centric_observation_space(self) -> spaces.Dict:
+        """Returns the observation space for object-centric observations."""
+        return spaces.Dict({
+            "dummy": spaces.Box(low=0, high=1, shape=(1,), dtype=jnp.float32)
+        })
     def get_object_centric_obs(self, state: EnvState) -> Dict[str, jnp.ndarray]:
-        return {}
+        """
+        返回一个与 object_centric_observation_space 匹配的虚拟观测值。
+        """
+        return {"dummy": jnp.array([0.0], dtype=jnp.float32)}
+
 
     def get_ram(self, state: EnvState) -> jnp.ndarray:
         return jnp.zeros(128, dtype=jnp.uint8)
@@ -2580,7 +2596,7 @@ class JaxGravitar(JaxEnvironment):
         frame = self.renderer.render(env_state)
         return frame
 
-    # === 核心修正 2: 确保所有 reset 函数返回的是 JAX 数组 ===
+    # === Core Fix 2: Ensure all reset functions return JAX arrays ===
 
     def reset_map(self, key: jnp.ndarray, 
                   lives: Optional[int] = None, 
@@ -2621,7 +2637,7 @@ class JaxGravitar(JaxEnvironment):
             reactor_destroyed=final_reactor_destroyed, planets_cleared_mask=final_cleared_mask,
         )
         
-        # 确保 obs 是一个 JAX 数组
+        # Ensure obs is a JAX array
         obs = jnp.array([
             ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle
         ], dtype=jnp.float32)
@@ -2673,15 +2689,15 @@ class JaxGravitar(JaxEnvironment):
             level_offset=jnp.array(level_offset, dtype=jnp.float32),
         )
         
-        # 确保 obs 是一个 JAX 数组
+        # Ensure obs is a JAX array
         obs = jnp.array([
             ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle
         ], dtype=jnp.float32)
         return obs, env_state
 
-    # --- 辅助方法 ---
+    # --- Helper Methods ---
     def _build_terrain_bank(self) -> jnp.ndarray:
-        # ... (这个函数的实现保持不变) ...
+        # ... (The implementation of this function remains unchanged) ...
         W, H = WINDOW_WIDTH, WINDOW_HEIGHT
         bank = [np.zeros((H, W, 3), dtype=np.uint8)]
         BANK_IDX_TO_LEVEL_ID = {v: k for k, v in LEVEL_ID_TO_BANK_IDX.items()}

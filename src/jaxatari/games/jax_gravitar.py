@@ -2448,13 +2448,13 @@ class JaxGravitar(JaxEnvironment):
         self.obs_shape = (5,)
         self.num_actions = 18
 
-        # ---- 资源加载与 JAX 渲染器初始化 ----
+        # ---- Resource Loading and JAX Renderer Initialization ----
         pygame.init()
         pygame.display.set_mode((1, 1), pygame.NOFRAME)
         self.sprites = load_sprites_tuple()
         self.renderer = GravitarRenderer(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
         
-        # --- 存储精灵的原始尺寸 ---
+        # --- Store original sprite dimensions ---
         self.sprite_dims = {}
         sprites_to_measure = [
             SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN,
@@ -2466,7 +2466,7 @@ class JaxGravitar(JaxEnvironment):
             if sprite_surf:
                 self.sprite_dims[int(sprite_idx)] = (sprite_surf.get_width(), sprite_surf.get_height())
 
-        # --- 地图布局和碰撞半径 ---
+       # --- Map layout and collision rad ---
         MAP_SCALE = 3
         HITBOX_SCALE = 0.90
         layout = [
@@ -2486,7 +2486,7 @@ class JaxGravitar(JaxEnvironment):
         self.planets = (np.array(px, dtype=np.float32), np.array(py, dtype=np.float32), np.array(pr, dtype=np.float32), np.array(pi, dtype=np.int32))
         self.terrain_bank = self._build_terrain_bank()
 
-        # --- 将所有关卡数据转换为 JAX 数组 ---
+        # --- Convert all level data to JAX arrays ---
         num_levels = max(LEVEL_LAYOUTS.keys()) + 1
         max_objects = max(len(v) for v in LEVEL_LAYOUTS.values()) if LEVEL_LAYOUTS else 0
         layout_types = np.full((num_levels, max_objects), -1, dtype=np.int32)
@@ -2510,7 +2510,7 @@ class JaxGravitar(JaxEnvironment):
         self.jax_level_to_bank = jnp.array([LEVEL_ID_TO_BANK_IDX[k] for k in level_ids_sorted])
         self.jax_level_offsets = jnp.array([LEVEL_OFFSETS[k] for k in level_ids_sorted])
 
-        # +++ 新增：预计算每个关卡的 scale, ox, oy +++
+        # Pre-compute scale, ox, oy for each level 
         level_transforms = np.zeros((num_levels, 3), dtype=np.float32) # scale, ox, oy
         for level_id in level_ids_sorted:
             terrain_sprite_enum = LEVEL_ID_TO_TERRAIN_SPRITE[level_id]
@@ -2525,9 +2525,8 @@ class JaxGravitar(JaxEnvironment):
             oy = (WINDOW_HEIGHT - sh) // 2 + level_offset[1]
             level_transforms[level_id] = [scale, ox, oy]
         self.jax_level_transforms = jnp.array(level_transforms)
-        # +++++++++++++++++++++++++++++++++++++++++++++
 
-        # ---- JIT 辅助初始化 ----
+        # ---- JIT Helper Initialization ----
         dummy_key = jax.random.PRNGKey(0)
         _, dummy_state = self.reset(dummy_key)
         tmp_obs, tmp_state = self.reset_level(dummy_key, jnp.int32(0), dummy_state) 
@@ -2535,11 +2534,6 @@ class JaxGravitar(JaxEnvironment):
             jax.ShapeDtypeStruct(tmp_obs.shape, tmp_obs.dtype),
             jax.tree_util.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), tmp_state)
         )
-
-    def action_space(self):
-        # The `spaces.Discrete` space from the tutorial supports `sample(key)`
-        # Most implementations only require `n`; if requires `dtype`, add `dtype=jnp.int32`
-        return spaces.Discrete(self.num_actions)
     
     def draw_hud(self):
         scr = self.screen
@@ -2601,11 +2595,11 @@ class JaxGravitar(JaxEnvironment):
             for i in range(lives):
                 scr.blit(hp_scaled, (x0 + i * (seg_w + HP_GAP), y_cursor))
 
-    def action_space(self):
+    def action_space(self) -> spaces.Discrete:
         # This function is already correct. No changes needed.
         return spaces.Discrete(self.num_actions)
     
-    def observation_space(self):
+    def observation_space(self) -> spaces.Box:
         """Returns the observation space of the environment."""
         # Define reasonable, finite bounds for the observation space.
         low = jnp.array([
@@ -2832,12 +2826,8 @@ class JaxGravitar(JaxEnvironment):
         )
 
         obs = jnp.array([
-            ship_state.x,
-            ship_state.y,
-            ship_state.vx,
-            ship_state.vy,
-            ship_state.angle
-        ])
+            ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle
+        ], dtype=jnp.float32)
 
         return obs, env_state
 
@@ -2848,16 +2838,16 @@ class JaxGravitar(JaxEnvironment):
     def reset_level(self, key: jnp.ndarray, level_id: jnp.ndarray, prev_env_state: EnvState):
         level_id = jnp.asarray(level_id, dtype=jnp.int32)
 
-        # === 1. 通过 JAX 数组索引获取所有关卡数据 ===
+        # === 1. Get all level data via JAX array indexing ===
         level_offset = self.jax_level_offsets[level_id]
         terrain_sprite_idx = self.jax_level_to_terrain[level_id]
         bank_idx = self.jax_level_to_bank[level_id]
         
-        # 使用预计算的变换值
+        # Use the pre-computed transform values
         transform = self.jax_level_transforms[level_id]
         scale, ox, oy = transform[0], transform[1], transform[2]
 
-        # === 2. 使用 fori_loop 创建关卡中的对象 (无 Pygame 依赖) ===
+        # === 2. Create objects in the level using fori_loop (no Pygame dependency) ===
         def loop_body(i, carry):
             enemies, tanks, e_idx, t_idx = carry
             obj_type = self.jax_layout["types"][level_id, i]
@@ -2870,7 +2860,6 @@ class JaxGravitar(JaxEnvironment):
                 y = oy + self.jax_layout["coords_y"][level_id, i] * scale
                 is_tank = (obj_type == SpriteIdx.FUEL_TANK).astype(jnp.int32)
                 
-                # ... (这部分逻辑保持不变) ...
                 new_enemies = enemies_in._replace(
                     x=enemies_in.x.at[e_idx_in].set(jnp.where(is_tank, -1.0, x)),
                     y=enemies_in.y.at[e_idx_in].set(jnp.where(is_tank, -1.0, y)),
@@ -2899,7 +2888,7 @@ class JaxGravitar(JaxEnvironment):
         )
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(0, self.jax_layout["types"].shape[1], loop_body, (init_enemies, init_tanks, 0, 0))
 
-        # === 3. 组装最终的 EnvState ===
+        # === 3. Assemble the final EnvState ===
         ship_state = make_level_start_state(level_id)
         env_state = prev_env_state._replace(
             mode=jnp.int32(1), state=ship_state,
@@ -2918,9 +2907,10 @@ class JaxGravitar(JaxEnvironment):
             mode_timer=jnp.int32(0), ufo=make_empty_ufo(), ufo_used=jnp.array(False),
             level_offset=jnp.array(level_offset, dtype=jnp.float32),
         )
-        obs = jnp.array([ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle])
+        obs = jnp.array([
+            ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle
+        ], dtype=jnp.float32)
         return obs, env_state
-    
     
    # Gets terrain for a level (TERRANT*)
     def _make_level_terrain(self, planet_idx_for_level):
@@ -2929,9 +2919,7 @@ class JaxGravitar(JaxEnvironment):
         mask, scale, offset = self.build_terrain_mask_and_transform(int(terr_idx))
 
         return terr_idx, mask, scale, offset
-
-    
-            
+       
     def step(self, env_state: EnvState, action: int):
         """
         The public-facing step function. It wraps the JIT-compiled step_full,

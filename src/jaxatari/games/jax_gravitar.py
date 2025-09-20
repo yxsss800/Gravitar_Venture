@@ -2567,7 +2567,7 @@ class JaxGravitar(JaxEnvironment):
         return obs
 
     def get_object_centric_obs(self, state: EnvState) -> Dict[str, jnp.ndarray]:
-        raise NotImplementedError("Gravitar does not support object-centric observations.")
+        return {}
 
     def get_ram(self, state: EnvState) -> jnp.ndarray:
         return jnp.zeros(128, dtype=jnp.uint8)
@@ -2578,7 +2578,7 @@ class JaxGravitar(JaxEnvironment):
     def render(self, env_state: EnvState) -> Tuple[jnp.ndarray]:
         """Renders the state using the pure JAX renderer."""
         frame = self.renderer.render(env_state)
-        return (frame,)
+        return frame
 
     # === 核心修正 2: 确保所有 reset 函数返回的是 JAX 数组 ===
 
@@ -2719,7 +2719,7 @@ class JaxGravitar(JaxEnvironment):
             bank.append(sprite_to_mask(int(sprite_idx), bank_idx))
         return jnp.array(np.stack(bank, axis=0), dtype=jnp.uint8)
     
-    
+
 class GravitarRenderer(JAXGameRenderer):
     def __init__(self, width: int = WINDOW_WIDTH, height: int = WINDOW_HEIGHT):
         super().__init__()

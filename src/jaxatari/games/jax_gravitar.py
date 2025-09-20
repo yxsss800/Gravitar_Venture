@@ -2443,18 +2443,18 @@ def get_action_from_key():
 
 
 class JaxGravitar(JaxEnvironment):
-    def __init__(self, render_backend: str = "pygame"):
+    def __init__(self):
         super().__init__()
         self.obs_shape = (5,)
         self.num_actions = 18
 
-        # ---- Resource Loading and JAX Renderer Initialization ----
+        # ---- 资源加载与 JAX 渲染器初始化 ----
         pygame.init()
         pygame.display.set_mode((1, 1), pygame.NOFRAME)
         self.sprites = load_sprites_tuple()
         self.renderer = GravitarRenderer(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
         
-        # --- Store original sprite dimensions ---
+        # --- 存储精灵的原始尺寸 ---
         self.sprite_dims = {}
         sprites_to_measure = [
             SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN,
@@ -2466,7 +2466,7 @@ class JaxGravitar(JaxEnvironment):
             if sprite_surf:
                 self.sprite_dims[int(sprite_idx)] = (sprite_surf.get_width(), sprite_surf.get_height())
 
-       # --- Map layout and collision rad ---
+        # --- 地图布局和碰撞半径 ---
         MAP_SCALE = 3
         HITBOX_SCALE = 0.90
         layout = [
@@ -2486,7 +2486,7 @@ class JaxGravitar(JaxEnvironment):
         self.planets = (np.array(px, dtype=np.float32), np.array(py, dtype=np.float32), np.array(pr, dtype=np.float32), np.array(pi, dtype=np.int32))
         self.terrain_bank = self._build_terrain_bank()
 
-        # --- Convert all level data to JAX arrays ---
+        # --- 将所有关卡数据转换为 JAX 数组 ---
         num_levels = max(LEVEL_LAYOUTS.keys()) + 1
         max_objects = max(len(v) for v in LEVEL_LAYOUTS.values()) if LEVEL_LAYOUTS else 0
         layout_types = np.full((num_levels, max_objects), -1, dtype=np.int32)
@@ -2510,7 +2510,6 @@ class JaxGravitar(JaxEnvironment):
         self.jax_level_to_bank = jnp.array([LEVEL_ID_TO_BANK_IDX[k] for k in level_ids_sorted])
         self.jax_level_offsets = jnp.array([LEVEL_OFFSETS[k] for k in level_ids_sorted])
 
-        # Pre-compute scale, ox, oy for each level 
         level_transforms = np.zeros((num_levels, 3), dtype=np.float32) # scale, ox, oy
         for level_id in level_ids_sorted:
             terrain_sprite_enum = LEVEL_ID_TO_TERRAIN_SPRITE[level_id]
@@ -2525,8 +2524,8 @@ class JaxGravitar(JaxEnvironment):
             oy = (WINDOW_HEIGHT - sh) // 2 + level_offset[1]
             level_transforms[level_id] = [scale, ox, oy]
         self.jax_level_transforms = jnp.array(level_transforms)
-
-        # ---- JIT Helper Initialization ----
+        
+        # ---- JIT 辅助初始化 ----
         dummy_key = jax.random.PRNGKey(0)
         _, dummy_state = self.reset(dummy_key)
         tmp_obs, tmp_state = self.reset_level(dummy_key, jnp.int32(0), dummy_state) 
@@ -2534,219 +2533,54 @@ class JaxGravitar(JaxEnvironment):
             jax.ShapeDtypeStruct(tmp_obs.shape, tmp_obs.dtype),
             jax.tree_util.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), tmp_state)
         )
-    
-    def draw_hud(self):
-        scr = self.screen
-        W = scr.get_width()
 
-        # Style parameters: uniform scaling & right shift
-        SCALE = 3.5          # Scaling factor
-        RIGHT_OFFSET = 80    # Pixels to shift right
-        TOP_MARGIN = 4
-        GAP = 10             # Vertical gap between score and HP
-        HP_GAP = 3           # Horizontal gap between lives
-        DIGIT_SPACING = int(2 * SCALE)
+    # === 核心修正 1: 实现所有必需的抽象方法 ===
 
-        # Background bar
-        pygame.draw.rect(scr, (0, 0, 0), (0, 0, W, HUD_HEIGHT))
+    def reset(self, key: jnp.ndarray) -> Tuple[jnp.ndarray, EnvState]:
+        """Implements the main reset entry point of the environment."""
+        return self.reset_map(key)
 
-        # ===== Score (Rendered with digit sprites) =====
-        score_text = f"{int(self.score):06d}"  # Fixed 6 digits
-        digit_surfs = []
-        total_w = 0
-        max_h = 0
-
-        for ch in score_text:
-            idx = getattr(SpriteIdx, f"DIGIT_{ch}")
-            spr = self.sprites[idx] if self.sprites else None
-            if spr is None:
-                spr = pygame.Surface((8, 12), pygame.SRCALPHA)
-            if SCALE != 1.0:
-                w, h = spr.get_width(), spr.get_height()
-                spr = pygame.transform.scale(spr, (int(w * SCALE), int(h * SCALE)))
-            digit_surfs.append(spr)
-            total_w += spr.get_width()
-            max_h = max(max_h, spr.get_height())
-
-        total_w += max(0, len(digit_surfs) - 1) * DIGIT_SPACING
-
-        x0 = (W - total_w) // 2 + RIGHT_OFFSET
-        y0 = TOP_MARGIN
-
-        x = x0
-        for i, spr in enumerate(digit_surfs):
-            scr.blit(spr, (x, y0))
-            x += spr.get_width()
-            if i < len(digit_surfs) - 1:
-                x += DIGIT_SPACING
-
-        y_cursor = y0 + max_h + GAP
-
-        # ===== Lives: Use the `HP_UI` sprite, repeated `lives` times; same scaling & right shift =====
-        hp_spr = self.sprites[SpriteIdx.HP_UI] if self.sprites else None
-        if hp_spr is not None and self.lives > 0:
-            hw, hh = hp_spr.get_width(), hp_spr.get_height()
-            hp_scaled = pygame.transform.scale(hp_spr, (hw * SCALE, hh * SCALE))
-
-            lives = int(self.lives)
-            seg_w = hp_scaled.get_width()
-            total_w = lives * seg_w + (lives - 1) * HP_GAP
-            x0 = (W - total_w) // 2 + RIGHT_OFFSET 
-            for i in range(lives):
-                scr.blit(hp_scaled, (x0 + i * (seg_w + HP_GAP), y_cursor))
+    def step(self, env_state: EnvState, action: int):
+        """Implements the main step entry point of the environment."""
+        obs, ns, reward, done, info, _reset, _level = step_full(env_state, action, self)
+        # Convert JAX types to standard Python types for compatibility
+        try:
+            reward = float(reward.item() if hasattr(reward, "item") else reward)
+        except Exception: pass
+        try:
+            done = bool(done.item() if hasattr(done, "item") else done)
+        except Exception: pass
+        return obs, ns, reward, done, info
 
     def action_space(self) -> spaces.Discrete:
-        # This function is already correct. No changes needed.
         return spaces.Discrete(self.num_actions)
-    
-    def observation_space(self) -> spaces.Box:
-        """Returns the observation space of the environment."""
-        # Define reasonable, finite bounds for the observation space.
-        low = jnp.array([
-            0.0, 0.0, -10.0, -10.0, -jnp.pi
-        ], dtype=jnp.float32)
-        
-        high = jnp.array([
-            float(WINDOW_WIDTH), float(WINDOW_HEIGHT), 10.0, 10.0, jnp.pi
-        ], dtype=jnp.float32)
 
-        return spaces.Box(
-            low=low,
-            high=high,
-            shape=self.obs_shape,
-            dtype=jnp.float32
-        )
+    def observation_space(self) -> spaces.Box:
+        low = jnp.array([0.0, 0.0, -10.0, -10.0, -jnp.pi], dtype=jnp.float32)
+        high = jnp.array([float(WINDOW_WIDTH), float(WINDOW_HEIGHT), 10.0, 10.0, jnp.pi], dtype=jnp.float32)
+        return spaces.Box(low=low, high=high, shape=self.obs_shape, dtype=jnp.float32)
 
     def image_space(self) -> spaces.Box:
-        """Returns the image space of the environment."""
-        # This defines the properties of the image returned by the render() method.
-        return spaces.Box(
-            low=0,
-            high=255,
-            shape=(WINDOW_HEIGHT, WINDOW_WIDTH, 3),
-            dtype=jnp.uint8
-        )
+        return spaces.Box(low=0, high=255, shape=(WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=jnp.uint8)
 
     def obs_to_flat_array(self, obs: jnp.ndarray) -> jnp.ndarray:
-        """
-        Converts the observation to a flat 1D array.
-        Since our observation is already a 1D vector, we just return it.
-        """
         return obs
-    
+
     def get_object_centric_obs(self, state: EnvState) -> Dict[str, jnp.ndarray]:
-        """
-        Gravitar does not currently support object-centric observations.
-        This method is implemented to satisfy the abstract base class requirements.
-        """
         raise NotImplementedError("Gravitar does not support object-centric observations.")
 
     def get_ram(self, state: EnvState) -> jnp.ndarray:
-        """
-        Gravitar does not have a direct RAM equivalent.
-        This method returns a placeholder to satisfy the abstract base class requirements.
-        """
-        # Return a zero-filled array with the standard Atari RAM shape.
         return jnp.zeros(128, dtype=jnp.uint8)
 
     def get_ale_lives(self, state: EnvState) -> jnp.ndarray:
-        """Returns the current number of lives from the environment state."""
         return state.lives
 
     def render(self, env_state: EnvState) -> Tuple[jnp.ndarray]:
-        """
-        Renders the environment state to an image using the JAX renderer.
-        This method is pure, JIT-compatible, and the single source of truth for rendering.
-        """
+        """Renders the state using the pure JAX renderer."""
         frame = self.renderer.render(env_state)
         return (frame,)
-    
-    def build_terrain_mask_and_transform(self, terr_idx: int):
-        surf = self.sprites[SpriteIdx(terr_idx)]
-        tw, th = surf.get_width(), surf.get_height()
-        W, H = WINDOW_WIDTH, WINDOW_HEIGHT
 
-        alpha = pygame.surfarray.pixels_alpha(surf)
-        small_mask_np = (alpha.T > 0).astype('uint8')  # (H, W)
-        del alpha
-
-        scale = min(W / tw, H / th)
-
-        # Sync extra scaling
-        extra = TERRANT_SCALE_OVERRIDES.get(SpriteIdx(terr_idx), 1.0)
-        scale *= float(extra)
-
-        sw, sh = int(tw * scale), int(th * scale)
-        ox = (W - sw) // 2
-        oy = (H - sh) // 2
-
-        full_mask = jnp.zeros((H, W), dtype=jnp.uint8)
-
-        h_small, w_small = small_mask_np.shape
-        full_mask = full_mask.at[oy:oy+h_small, ox:ox+w_small].set(small_mask_np)
-
-        return (full_mask,
-                jnp.array(scale, dtype=jnp.float32),
-                jnp.array([ox, oy], dtype=jnp.float32))
-    
-    def _build_terrain_bank(self) -> jnp.ndarray:
-        """Builds a bank of binary masks at screen size: 0=empty, 1=T1, 2=T2, 3=T3, 4=T4 (can add reactor=5)."""
-        W, H = WINDOW_WIDTH, WINDOW_HEIGHT
-        # Index 0: All zeros (map/no terrain)
-        bank = [np.zeros((H, W, 3), dtype=np.uint8)]
-
-        BANK_IDX_TO_LEVEL_ID = {v: k for k, v in LEVEL_ID_TO_BANK_IDX.items()}
-
-        def sprite_to_mask(idx: int, bank_idx: int) -> np.ndarray: 
-            surf = self.sprites[SpriteIdx(idx)]
-            tw, th = surf.get_width(), surf.get_height()
-            scale = min(W / tw, H / th)
-            extra = TERRANT_SCALE_OVERRIDES.get(SpriteIdx(idx), 1.0)
-            scale *= float(extra)
-            sw, sh = int(tw * scale), int(th * scale)
-            
-            ox, oy = (W - sw) // 2, (H - sh) // 2
-            
-            level_id = BANK_IDX_TO_LEVEL_ID.get(bank_idx)
-            if level_id is not None:
-                level_offset = LEVEL_OFFSETS.get(level_id, (0, 0))
-                ox += level_offset[0]
-                oy += level_offset[1]
-
-            scaled_surf = pygame.transform.scale(surf, (sw, sh))
-
-            rgb_array = pygame.surfarray.pixels3d(scaled_surf)
-            rgb_array_hwc = rgb_array.transpose((1, 0, 2))
-
-            color_map = np.zeros((H, W, 3), dtype=np.uint8)
-            
-            src_w, src_h = rgb_array_hwc.shape[1], rgb_array_hwc.shape[0]
-            dst_x, dst_y = max(ox, 0), max(oy, 0)
-            
-            src_x = abs(min(ox, 0))
-            src_y = abs(min(oy, 0))
-            
-            copy_w = min(W - dst_x, src_w - src_x)
-            copy_h = min(H - dst_y, src_h - src_y)
-            
-            if copy_w > 0 and copy_h > 0:
-                 color_map[dst_y:dst_y+copy_h, dst_x:dst_x+copy_w] = rgb_array_hwc[src_y:src_y+copy_h, src_x:src_x+copy_w]
-
-            return color_map
-
-        # 1..4：TERRANT1..4
-        terrains_to_build = [
-            (SpriteIdx.TERRANT1, 1),
-            (SpriteIdx.TERRANT2, 2),
-            (SpriteIdx.TERRANT3, 3),
-            (SpriteIdx.TERRANT4, 4),
-            (SpriteIdx.REACTOR_TERR, 5),
-        ]
-        
-        for sprite_idx, bank_idx in terrains_to_build:
-            bank.append(sprite_to_mask(int(sprite_idx), bank_idx))
-
-        return jnp.array(np.stack(bank, axis=0), dtype=jnp.uint8)
+    # === 核心修正 2: 确保所有 reset 函数返回的是 JAX 数组 ===
 
     def reset_map(self, key: jnp.ndarray, 
                   lives: Optional[int] = None, 
@@ -2757,101 +2591,53 @@ class JaxGravitar(JaxEnvironment):
         ship_state = ShipState(
             x=jnp.array(WINDOW_WIDTH / 2, dtype=jnp.float32),
             y=jnp.array((WINDOW_HEIGHT + HUD_HEIGHT) / 2, dtype=jnp.float32),
-            vx=jnp.array(jnp.cos(-jnp.pi / 4) * 0.3, dtype=jnp.float32), # Speed of 1.5
+            vx=jnp.array(jnp.cos(-jnp.pi / 4) * 0.3, dtype=jnp.float32),
             vy=jnp.array(jnp.sin(-jnp.pi / 4) * 0.3, dtype=jnp.float32),
             angle=jnp.array(-jnp.pi / 2, dtype=jnp.float32)
         )
-        
-        
         px_np, py_np, pr_np, pi_np = self.planets
         ids_np = [SPRITE_TO_LEVEL_ID.get(sprite_idx, -1) for sprite_idx in pi_np]
-
         final_reactor_destroyed = reactor_destroyed if reactor_destroyed is not None else jnp.array(False)
         final_cleared_mask = planets_cleared_mask if planets_cleared_mask is not None else jnp.zeros_like(self.planets[0], dtype=bool)
 
         env_state = EnvState(
-            mode=jnp.int32(0),
-            state=ship_state,
-            bullets=create_empty_bullets_64(),
-            cooldown=jnp.array(0, dtype=jnp.int32),
-            enemies=create_empty_enemies(),
-            fuel_tanks=FuelTanks(           # Initialize an empty FuelTanks state for the map
-                x=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
-                y=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
-                w=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
-                h=jnp.zeros(MAX_ENEMIES, dtype=jnp.float32),
-                sprite_idx=jnp.full(MAX_ENEMIES, -1, dtype=jnp.int32),
-                active=jnp.zeros(MAX_ENEMIES, dtype=bool),
-            ),
-            enemy_bullets=create_empty_bullets_16(),
-            fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
-            key=key,
-            key_alt=key,
-            score=jnp.array(score if score is not None else 0.0, dtype=jnp.float32),
-            done=jnp.array(False),
-            lives=jnp.array(lives if lives is not None else MAX_LIVES, dtype=jnp.int32),
-            crash_timer=jnp.int32(0), 
-
-            planets_px=jnp.array(px_np, dtype=jnp.float32),
-            planets_py=jnp.array(py_np, dtype=jnp.float32),
-            planets_pr=jnp.array(pr_np, dtype=jnp.float32),
-            planets_pi=jnp.array(pi_np, dtype=jnp.int32), 
-            planets_id=jnp.array(ids_np, dtype=jnp.int32),
-            current_level=jnp.int32(-1),
-
-            terrain_sprite_idx=jnp.int32(-1),
+            mode=jnp.int32(0), state=ship_state, bullets=create_empty_bullets_64(),
+            cooldown=jnp.array(0, dtype=jnp.int32), enemies=create_empty_enemies(),
+            fuel_tanks=FuelTanks(x=jnp.zeros(MAX_ENEMIES), y=jnp.zeros(MAX_ENEMIES), w=jnp.zeros(MAX_ENEMIES), h=jnp.zeros(MAX_ENEMIES), sprite_idx=jnp.full(MAX_ENEMIES, -1), active=jnp.zeros(MAX_ENEMIES, dtype=bool)),
+            enemy_bullets=create_empty_bullets_16(), fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
+            key=key, key_alt=key, score=jnp.array(score if score is not None else 0.0, dtype=jnp.float32),
+            done=jnp.array(False), lives=jnp.array(lives if lives is not None else MAX_LIVES, dtype=jnp.int32),
+            crash_timer=jnp.int32(0), planets_px=jnp.array(px_np), planets_py=jnp.array(py_np),
+            planets_pr=jnp.array(pr_np), planets_pi=jnp.array(pi_np), planets_id=jnp.array(ids_np),
+            current_level=jnp.int32(-1), terrain_sprite_idx=jnp.int32(-1),
             terrain_mask=jnp.zeros((WINDOW_HEIGHT, WINDOW_WIDTH), dtype=jnp.uint8),
-            terrain_scale=jnp.array(1.0, dtype=jnp.float32),          
-            terrain_offset=jnp.array([0.0, 0.0], dtype=jnp.float32), 
-            terrain_bank=self.terrain_bank,
-            terrain_bank_idx=jnp.int32(0),
-            respawn_shift_x=jnp.float32(0.0),
-            reactor_dest_active=jnp.array(False),
-            reactor_dest_x=jnp.float32(0.0),
-            reactor_dest_y=jnp.float32(0.0),
-            reactor_dest_radius=jnp.float32(0.4), 
-            mode_timer=jnp.int32(0),
-            saucer=make_default_saucer(),
-            saucer_spawn_timer=jnp.int32(SAUCER_SPAWN_DELAY_FRAMES),
-            map_return_x=jnp.float32(0.0),
-            map_return_y=jnp.float32(0.0),
-            ufo=make_empty_ufo(),
-            ufo_used=jnp.array(False),
-            ufo_home_x=jnp.float32(0.0),
-            ufo_home_y=jnp.float32(0.0),
-            ufo_bullets=create_empty_bullets_16(),
-            level_offset=jnp.array([0, 0], dtype=jnp.float32),
-            reactor_destroyed=final_reactor_destroyed,
-            planets_cleared_mask=final_cleared_mask,
+            terrain_scale=jnp.array(1.0), terrain_offset=jnp.array([0.0, 0.0]),
+            terrain_bank=self.terrain_bank, terrain_bank_idx=jnp.int32(0), respawn_shift_x=jnp.float32(0.0),
+            reactor_dest_active=jnp.array(False), reactor_dest_x=jnp.float32(0.0), reactor_dest_y=jnp.float32(0.0),
+            reactor_dest_radius=jnp.float32(0.4), mode_timer=jnp.int32(0), saucer=make_default_saucer(),
+            saucer_spawn_timer=jnp.int32(SAUCER_SPAWN_DELAY_FRAMES), map_return_x=jnp.float32(0.0), map_return_y=jnp.float32(0.0),
+            ufo=make_empty_ufo(), ufo_used=jnp.array(False), ufo_home_x=jnp.float32(0.0), ufo_home_y=jnp.float32(0.0),
+            ufo_bullets=create_empty_bullets_16(), level_offset=jnp.array([0, 0], dtype=jnp.float32),
+            reactor_destroyed=final_reactor_destroyed, planets_cleared_mask=final_cleared_mask,
         )
-
+        
+        # 确保 obs 是一个 JAX 数组
         obs = jnp.array([
             ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle
         ], dtype=jnp.float32)
-
         return obs, env_state
 
-    def reset(self, key: jnp.ndarray = jax.random.PRNGKey(0)) -> Tuple[jnp.ndarray, EnvState]:
-        obs, env_state = self.reset_map(key)
-        return obs, env_state
-    
     def reset_level(self, key: jnp.ndarray, level_id: jnp.ndarray, prev_env_state: EnvState):
         level_id = jnp.asarray(level_id, dtype=jnp.int32)
-
-        # === 1. Get all level data via JAX array indexing ===
         level_offset = self.jax_level_offsets[level_id]
         terrain_sprite_idx = self.jax_level_to_terrain[level_id]
         bank_idx = self.jax_level_to_bank[level_id]
-        
-        # Use the pre-computed transform values
         transform = self.jax_level_transforms[level_id]
         scale, ox, oy = transform[0], transform[1], transform[2]
-
-        # === 2. Create objects in the level using fori_loop (no Pygame dependency) ===
+        
         def loop_body(i, carry):
             enemies, tanks, e_idx, t_idx = carry
             obj_type = self.jax_layout["types"][level_id, i]
-            
             def place_obj(val):
                 enemies_in, tanks_in, e_idx_in, t_idx_in = val
                 orig_idx = jnp.where(obj_type == SpriteIdx.ENEMY_ORANGE_FLIPPED, SpriteIdx.ENEMY_ORANGE, obj_type)
@@ -2859,36 +2645,15 @@ class JaxGravitar(JaxEnvironment):
                 x = ox + self.jax_layout["coords_x"][level_id, i] * scale
                 y = oy + self.jax_layout["coords_y"][level_id, i] * scale
                 is_tank = (obj_type == SpriteIdx.FUEL_TANK).astype(jnp.int32)
-                
-                new_enemies = enemies_in._replace(
-                    x=enemies_in.x.at[e_idx_in].set(jnp.where(is_tank, -1.0, x)),
-                    y=enemies_in.y.at[e_idx_in].set(jnp.where(is_tank, -1.0, y)),
-                    w=enemies_in.w.at[e_idx_in].set(jnp.where(is_tank, 0.0, w)),
-                    h=enemies_in.h.at[e_idx_in].set(jnp.where(is_tank, 0.0, h)),
-                    sprite_idx=enemies_in.sprite_idx.at[e_idx_in].set(jnp.where(is_tank, -1, obj_type)),
-                    hp=enemies_in.hp.at[e_idx_in].set(jnp.where(is_tank, 0, 1)),
-                )
-                new_tanks = tanks_in._replace(
-                    x=tanks_in.x.at[t_idx_in].set(jnp.where(is_tank, x, -1.0)),
-                    y=tanks_in.y.at[t_idx_in].set(jnp.where(is_tank, y, -1.0)),
-                    w=tanks_in.w.at[t_idx_in].set(jnp.where(is_tank, w, 0.0)),
-                    h=tanks_in.h.at[t_idx_in].set(jnp.where(is_tank, h, 0.0)),
-                    sprite_idx=tanks_in.sprite_idx.at[t_idx_in].set(jnp.where(is_tank, obj_type, -1)),
-                    active=tanks_in.active.at[t_idx_in].set(jnp.where(is_tank, True, False)),
-                )
+                new_enemies = enemies_in._replace(x=enemies_in.x.at[e_idx_in].set(jnp.where(is_tank, -1.0, x)), y=enemies_in.y.at[e_idx_in].set(jnp.where(is_tank, -1.0, y)), w=enemies_in.w.at[e_idx_in].set(jnp.where(is_tank, 0.0, w)), h=enemies_in.h.at[e_idx_in].set(jnp.where(is_tank, 0.0, h)), sprite_idx=enemies_in.sprite_idx.at[e_idx_in].set(jnp.where(is_tank, -1, obj_type)), hp=enemies_in.hp.at[e_idx_in].set(jnp.where(is_tank, 0, 1)),)
+                new_tanks = tanks_in._replace(x=tanks_in.x.at[t_idx_in].set(jnp.where(is_tank, x, -1.0)), y=tanks_in.y.at[t_idx_in].set(jnp.where(is_tank, y, -1.0)), w=tanks_in.w.at[t_idx_in].set(jnp.where(is_tank, w, 0.0)), h=tanks_in.h.at[t_idx_in].set(jnp.where(is_tank, h, 0.0)), sprite_idx=tanks_in.sprite_idx.at[t_idx_in].set(jnp.where(is_tank, obj_type, -1)), active=tanks_in.active.at[t_idx_in].set(jnp.where(is_tank, True, False)),)
                 return new_enemies, new_tanks, e_idx_in + (1 - is_tank), t_idx_in + is_tank
-
             return jax.lax.cond(obj_type != -1, place_obj, lambda x: x, (enemies, tanks, e_idx, t_idx))
-
+        
         init_enemies = create_empty_enemies()
-        init_tanks = FuelTanks(
-            x=jnp.full((MAX_ENEMIES,), -1.0), y=jnp.full((MAX_ENEMIES,), -1.0),
-            w=jnp.zeros((MAX_ENEMIES,)), h=jnp.zeros((MAX_ENEMIES,)),
-            sprite_idx=jnp.full((MAX_ENEMIES,), -1), active=jnp.zeros((MAX_ENEMIES,), dtype=bool)
-        )
+        init_tanks = FuelTanks(x=jnp.full((MAX_ENEMIES,), -1.0), y=jnp.full((MAX_ENEMIES,), -1.0), w=jnp.zeros((MAX_ENEMIES,)), h=jnp.zeros((MAX_ENEMIES,)), sprite_idx=jnp.full((MAX_ENEMIES,), -1), active=jnp.zeros((MAX_ENEMIES,), dtype=bool))
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(0, self.jax_layout["types"].shape[1], loop_body, (init_enemies, init_tanks, 0, 0))
-
-        # === 3. Assemble the final EnvState ===
+        
         ship_state = make_level_start_state(level_id)
         env_state = prev_env_state._replace(
             mode=jnp.int32(1), state=ship_state,
@@ -2907,38 +2672,54 @@ class JaxGravitar(JaxEnvironment):
             mode_timer=jnp.int32(0), ufo=make_empty_ufo(), ufo_used=jnp.array(False),
             level_offset=jnp.array(level_offset, dtype=jnp.float32),
         )
+        
+        # 确保 obs 是一个 JAX 数组
         obs = jnp.array([
             ship_state.x, ship_state.y, ship_state.vx, ship_state.vy, ship_state.angle
         ], dtype=jnp.float32)
         return obs, env_state
+
+    # --- 辅助方法 ---
+    def _build_terrain_bank(self) -> jnp.ndarray:
+        # ... (这个函数的实现保持不变) ...
+        W, H = WINDOW_WIDTH, WINDOW_HEIGHT
+        bank = [np.zeros((H, W, 3), dtype=np.uint8)]
+        BANK_IDX_TO_LEVEL_ID = {v: k for k, v in LEVEL_ID_TO_BANK_IDX.items()}
+        def sprite_to_mask(idx: int, bank_idx: int) -> np.ndarray:
+            surf = self.sprites[SpriteIdx(idx)]
+            tw, th = surf.get_width(), surf.get_height()
+            scale = min(W / tw, H / th)
+            extra = TERRANT_SCALE_OVERRIDES.get(SpriteIdx(idx), 1.0)
+            scale *= float(extra)
+            sw, sh = int(tw * scale), int(th * scale)
+            ox, oy = (W - sw) // 2, (H - sh) // 2
+            level_id = BANK_IDX_TO_LEVEL_ID.get(bank_idx)
+            if level_id is not None:
+                level_offset = LEVEL_OFFSETS.get(level_id, (0, 0))
+                ox += level_offset[0]
+                oy += level_offset[1]
+            scaled_surf = pygame.transform.scale(surf, (sw, sh))
+            rgb_array = pygame.surfarray.pixels3d(scaled_surf)
+            rgb_array_hwc = rgb_array.transpose((1, 0, 2))
+            color_map = np.zeros((H, W, 3), dtype=np.uint8)
+            src_w, src_h = rgb_array_hwc.shape[1], rgb_array_hwc.shape[0]
+            dst_x, dst_y = max(ox, 0), max(oy, 0)
+            src_x = abs(min(ox, 0))
+            src_y = abs(min(oy, 0))
+            copy_w = min(W - dst_x, src_w - src_x)
+            copy_h = min(H - dst_y, src_h - src_y)
+            if copy_w > 0 and copy_h > 0:
+                 color_map[dst_y:dst_y+copy_h, dst_x:dst_x+copy_w] = rgb_array_hwc[src_y:src_y+copy_h, src_x:src_x+copy_w]
+            return color_map
+        terrains_to_build = [
+            (SpriteIdx.TERRANT1, 1), (SpriteIdx.TERRANT2, 2), (SpriteIdx.TERRANT3, 3),
+            (SpriteIdx.TERRANT4, 4), (SpriteIdx.REACTOR_TERR, 5),
+        ]
+        for sprite_idx, bank_idx in terrains_to_build:
+            bank.append(sprite_to_mask(int(sprite_idx), bank_idx))
+        return jnp.array(np.stack(bank, axis=0), dtype=jnp.uint8)
     
-   # Gets terrain for a level (TERRANT*)
-    def _make_level_terrain(self, planet_idx_for_level):
-        # This function converts the planet's sprite index into the corresponding terrain data
-        terr_idx = map_planet_to_terrant(planet_idx_for_level)
-        mask, scale, offset = self.build_terrain_mask_and_transform(int(terr_idx))
-
-        return terr_idx, mask, scale, offset
-       
-    def step(self, env_state: EnvState, action: int):
-        """
-        The public-facing step function. It wraps the JIT-compiled step_full,
-        and converts JAX array outputs (reward, done) to standard Python types.
-        """
-        obs, ns, reward, done, info, _reset, _level = step_full(env_state, action, self)
-
-        # Convert JAX arrays to Python scalars for compatibility with standard RL interfaces.
-        try:
-            reward = float(reward.item() if hasattr(reward, "item") else reward)
-        except Exception:
-            pass
-        try:
-            done = bool(done.item() if hasattr(done, "item") else done)
-        except Exception:
-            pass
-
-        return obs, ns, reward, done, info
-
+    
 class GravitarRenderer(JAXGameRenderer):
     def __init__(self, width: int = WINDOW_WIDTH, height: int = WINDOW_HEIGHT):
         super().__init__()

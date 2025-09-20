@@ -1744,13 +1744,14 @@ def _step_level_core(env_state: EnvState, action: int):
     crash_animation_finished = (state_after_ufo.crash_timer == 1)
     reset_from_reactor_crash = crash_in_reactor & crash_animation_finished
 
+    reward = score_delta     # Let reward equal the score change
     info = {
         "crash": start_crash,
         "hit_by_bullet": hit_by_enemy_bullet | hit_by_ufo_bullet,
         "reactor_crash_exit": reset_from_reactor_crash,
         "all_rewards": all_rewards,  
     }
-    reward = score_delta                # Let reward equal the score change
+                  
 
     return obs, final_env_state, reward, game_over, info, reset, jnp.int32(-1)
 
@@ -2582,7 +2583,9 @@ class JaxGravitar(JaxEnvironment):
         try:
             done = bool(done.item() if hasattr(done, "item") else done)
         except Exception: pass
-        return obs, ns, reward, done, info
+
+        reward_dict = info['all_rewards']
+        return obs, ns, reward_dict, done, info
 
     def action_space(self) -> spaces.Discrete:
         return spaces.Discrete(self.num_actions)

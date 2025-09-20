@@ -2269,7 +2269,6 @@ def step_core(env_state: EnvState, action: int):
             act
         )
 
-    # (jax.lax.cond 调用保持不变)
     return jax.lax.cond(
         env_state.done,
         _game_is_over,
@@ -2448,27 +2447,40 @@ class JaxGravitar(JaxEnvironment):
         super().__init__()
         self.obs_shape = (5,)
         self.num_actions = 18
-        self.render_backend = render_backend # 保留这个，因为它可能被使用
+        self.render_backend = render_backend
 
-        # 初始化 Pygame 用于加载资源，即使是无头模式
+        # ---- Pygame and Renderer Initialization (Core Fix) ----
         pygame.init()
-        pygame.display.set_mode((1, 1), pygame.NOFRAME)
+        pygame.font.init()  # Font module needs to be initialized
+        
+        # The self.screen instance must be created even in CI/headless mode
+        self.screen_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.screen = pygame.display.set_mode(self.screen_size)
+        
+        # Initialize the JAX renderer
+        self.renderer = GravitarRenderer(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
+        
+        # Load Pygame sprites (for the Pygame rendering branch)
         self.sprites = load_sprites_tuple()
 
-        # --- 存储精灵的原始尺寸 ---
-        # 这对于在 reset_level 中计算对象大小是必需的
+        # Retain some state variables needed for Pygame rendering
+        self.score = 0
+        self.lives = MAX_LIVES
+        # ----------------------------------------------
+
+        # --- Store original sprite dimensions ---
         self.sprite_dims = {}
         sprites_to_measure = [
             SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN,
             SpriteIdx.FUEL_TANK, SpriteIdx.ENEMY_UFO,
-            SpriteIdx.ENEMY_ORANGE_FLIPPED, # 确保也包含这个
+            SpriteIdx.ENEMY_ORANGE_FLIPPED,
         ]
         for sprite_idx in sprites_to_measure:
             sprite_surf = self.sprites[sprite_idx]
             if sprite_surf:
                 self.sprite_dims[int(sprite_idx)] = (sprite_surf.get_width(), sprite_surf.get_height())
 
-        # --- 地图布局和碰撞半径的预计算 ---
+        # --- Pre-computation of map layout and collision radii --
         MAP_SCALE = 3
         HITBOX_SCALE = 0.90
         layout = [
@@ -2483,51 +2495,41 @@ class JaxGravitar(JaxEnvironment):
             spr = self.sprites[idx]
             if spr:
                 r = 8.0 / WORLD_SCALE if idx == SpriteIdx.OBSTACLE else 0.3 * max(spr.get_width(), spr.get_height()) * MAP_SCALE * HITBOX_SCALE
-            else:
-                r = 4
+            else: r = 4
             px.append(cx); py.append(cy); pr.append(r); pi.append(int(idx))
         self.planets = (np.array(px, dtype=np.float32), np.array(py, dtype=np.float32), np.array(pr, dtype=np.float32), np.array(pi, dtype=np.int32))
         
-        # 预先构建地形图层库
         self.terrain_bank = self._build_terrain_bank()
 
-        # ========== 将所有关卡数据转换为 JAX 数组 (核心修复) ==========
+        # --- Convert level data to JAX arrays ---
         num_levels = max(LEVEL_LAYOUTS.keys()) + 1
         max_objects = max(len(v) for v in LEVEL_LAYOUTS.values()) if LEVEL_LAYOUTS else 0
-
         layout_types = np.full((num_levels, max_objects), -1, dtype=np.int32)
         layout_coords_x = np.zeros((num_levels, max_objects), dtype=np.float32)
         layout_coords_y = np.zeros((num_levels, max_objects), dtype=np.float32)
-
         for level_id, layout_data in LEVEL_LAYOUTS.items():
             for i, obj in enumerate(layout_data):
                 layout_types[level_id, i] = obj['type']
                 layout_coords_x[level_id, i] = obj['coords'][0]
                 layout_coords_y[level_id, i] = obj['coords'][1]
-        
         self.jax_layout = {
             "types": jnp.array(layout_types),
             "coords_x": jnp.array(layout_coords_x),
             "coords_y": jnp.array(layout_coords_y),
         }
-
         max_sprite_id = max(int(e) for e in SpriteIdx)
         dims_array = np.zeros((max_sprite_id + 1, 2), dtype=np.float32)
         for k, v in self.sprite_dims.items():
             dims_array[k] = v
         self.jax_sprite_dims = jnp.array(dims_array)
-
         level_ids_sorted = sorted(LEVEL_ID_TO_TERRAIN_SPRITE.keys())
         self.jax_level_to_terrain = jnp.array([LEVEL_ID_TO_TERRAIN_SPRITE[k] for k in level_ids_sorted])
         self.jax_level_to_bank = jnp.array([LEVEL_ID_TO_BANK_IDX[k] for k in level_ids_sorted])
         self.jax_level_offsets = jnp.array([LEVEL_OFFSETS[k] for k in level_ids_sorted])
-        # =================================================================
 
-        # ---- JIT 辅助初始化 ----
-        # 这是为了让 jax.pure_callback 知道 reset_level 函数的输出形状和类型
+        # ---- JIT Helper Initialization ----
         dummy_key = jax.random.PRNGKey(0)
         _, dummy_state = self.reset(dummy_key)
-        # 我们需要用一个 jax 数组作为 level_id 来调用，以模拟 JIT 环境
         tmp_obs, tmp_state = self.reset_level(dummy_key, jnp.int32(0), dummy_state) 
         self.reset_level_out_struct = (
             jax.ShapeDtypeStruct(tmp_obs.shape, tmp_obs.dtype),
@@ -2994,7 +2996,7 @@ class JaxGravitar(JaxEnvironment):
 
         BANK_IDX_TO_LEVEL_ID = {v: k for k, v in LEVEL_ID_TO_BANK_IDX.items()}
 
-        def sprite_to_mask(idx: int, bank_idx: int) -> np.ndarray: # 增加了 bank_idx 参数
+        def sprite_to_mask(idx: int, bank_idx: int) -> np.ndarray: 
             surf = self.sprites[SpriteIdx(idx)]
             tw, th = surf.get_width(), surf.get_height()
             scale = min(W / tw, H / th)
@@ -3139,12 +3141,13 @@ class JaxGravitar(JaxEnvironment):
     def reset_level(self, key: jnp.ndarray, level_id: jnp.ndarray, prev_env_state: EnvState):
         level_id = jnp.asarray(level_id, dtype=jnp.int32)
 
-        # === 1. 通过 JAX 数组索引获取关卡数据 ===
+        # === 1. Get level data via JAX array indexing ===
         level_offset = self.jax_level_offsets[level_id]
         terrain_sprite_idx = self.jax_level_to_terrain[level_id]
         bank_idx = self.jax_level_to_bank[level_id]
 
-        # 这部分依赖 Pygame，仅用于获取一次性设置值，它会在 pure_callback 的“外部”执行
+        # This part depends on Pygame and is only for one-time setup values.
+        # It executes "outside" of the pure_callback context.
         terr_surf = self.sprites[terrain_sprite_idx.item()]
         tw, th = terr_surf.get_width(), terr_surf.get_height()
         scale = min(WINDOW_WIDTH / tw, WINDOW_HEIGHT / th)
@@ -3154,7 +3157,7 @@ class JaxGravitar(JaxEnvironment):
         ox = (WINDOW_WIDTH - sw) // 2 + level_offset[0]
         oy = (WINDOW_HEIGHT - sh) // 2 + level_offset[1]
 
-        # === 2. 使用 fori_loop 创建关卡中的对象 ===
+        # === 2. Create objects in the level using fori_loop ===
         def loop_body(i, carry):
             enemies, tanks, e_idx, t_idx = carry
             obj_type = self.jax_layout["types"][level_id, i]
@@ -3199,7 +3202,7 @@ class JaxGravitar(JaxEnvironment):
         )
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(0, self.jax_layout["types"].shape[1], loop_body, (init_enemies, init_tanks, 0, 0))
 
-        # === 3. 组装最终的 EnvState ===
+        # === 3. Assemble the final EnvState ===
         ship_state = make_level_start_state(level_id)
         
         env_state = prev_env_state._replace(

@@ -479,7 +479,7 @@ def load_sprites_tuple() -> tuple:
         SpriteIdx.ENEMY_BULLET: "enemy_bullet",
         SpriteIdx.ENEMY_GREEN_BULLET: "enemy_green_bullet",
         SpriteIdx.ENEMY_ORANGE: "enemy_orange",
-        SpriteIdx.ENEMY_ORANGE_FLIPPED: "enemy_orange_flipped",
+        # SpriteIdx.ENEMY_ORANGE_FLIPPED: "enemy_orange_flipped",
         SpriteIdx.ENEMY_GREEN: "enemy_green",
         SpriteIdx.ENEMY_SAUCER: "saucer",
         SpriteIdx.ENEMY_UFO: "UFO",
@@ -2519,21 +2519,23 @@ class JaxGravitar(JaxEnvironment):
             for i in range(lives):
                 scr.blit(hp_scaled, (x0 + i * (seg_w + HP_GAP), y_cursor))
 
-    def get_action_space(self) -> Tuple[int]:
-        """
-        Returns the action space of the environment.
-        Returns: The action space of the environment as a tuple.
-        """
-        # raise NotImplementedError("Abstract method")
-        return (18,)  # Supports actions numbered 0 to 17   
-
-    def get_observation_space(self) -> Tuple[int]:
-        """
-        Returns the observation space of the environment.
-        Returns: The observation space of the environment as a tuple.
-        """
-        # raise NotImplementedError("Abstract method")
-        return (5,)
+    def action_space(self):
+        # This function is already correct. No changes needed.
+        return spaces.Discrete(self.num_actions)
+    
+    # --- 在这里添加新的、正确的 observation_space 函数 ---
+    def observation_space(self):
+        """Returns the observation space of the environment."""
+        # The observation is a vector of 5 floating-point numbers:
+        # [x, y, vx, vy, angle]
+        # We use a Box space to define this.
+        # low=-inf, high=+inf means the values are unbounded.
+        return spaces.Box(
+            low=-jnp.inf, 
+            high=jnp.inf, 
+            shape=self.obs_shape, # This correctly uses your self.obs_shape = (5,)
+            dtype=jnp.float32
+        )
 
     def render(self, env_state: EnvState) -> Tuple[jnp.ndarray]:
         # --------- pygame  ---------

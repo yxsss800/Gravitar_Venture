@@ -2447,28 +2447,14 @@ class JaxGravitar(JaxEnvironment):
         super().__init__()
         self.obs_shape = (5,)
         self.num_actions = 18
-        self.render_backend = render_backend
 
-        # ---- Pygame and Renderer Initialization (Core Fix) ----
+        # ---- 资源加载与 JAX 渲染器初始化 ----
         pygame.init()
-        pygame.font.init()  # Font module needs to be initialized
-        
-        # The self.screen instance must be created even in CI/headless mode
-        self.screen_size = (WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.screen = pygame.display.set_mode(self.screen_size)
-        
-        # Initialize the JAX renderer
+        pygame.display.set_mode((1, 1), pygame.NOFRAME)
+        self.sprites = load_sprites_tuple()
         self.renderer = GravitarRenderer(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
         
-        # Load Pygame sprites (for the Pygame rendering branch)
-        self.sprites = load_sprites_tuple()
-
-        # Retain some state variables needed for Pygame rendering
-        self.score = 0
-        self.lives = MAX_LIVES
-        # ----------------------------------------------
-
-        # --- Store original sprite dimensions ---
+        # --- 存储精灵的原始尺寸 ---
         self.sprite_dims = {}
         sprites_to_measure = [
             SpriteIdx.ENEMY_ORANGE, SpriteIdx.ENEMY_GREEN,
@@ -2480,7 +2466,7 @@ class JaxGravitar(JaxEnvironment):
             if sprite_surf:
                 self.sprite_dims[int(sprite_idx)] = (sprite_surf.get_width(), sprite_surf.get_height())
 
-        # --- Pre-computation of map layout and collision radii --
+        # --- 地图布局和碰撞半径 ---
         MAP_SCALE = 3
         HITBOX_SCALE = 0.90
         layout = [
@@ -2498,10 +2484,9 @@ class JaxGravitar(JaxEnvironment):
             else: r = 4
             px.append(cx); py.append(cy); pr.append(r); pi.append(int(idx))
         self.planets = (np.array(px, dtype=np.float32), np.array(py, dtype=np.float32), np.array(pr, dtype=np.float32), np.array(pi, dtype=np.int32))
-        
         self.terrain_bank = self._build_terrain_bank()
 
-        # --- Convert level data to JAX arrays ---
+        # --- 将所有关卡数据转换为 JAX 数组 ---
         num_levels = max(LEVEL_LAYOUTS.keys()) + 1
         max_objects = max(len(v) for v in LEVEL_LAYOUTS.values()) if LEVEL_LAYOUTS else 0
         layout_types = np.full((num_levels, max_objects), -1, dtype=np.int32)
@@ -2512,22 +2497,37 @@ class JaxGravitar(JaxEnvironment):
                 layout_types[level_id, i] = obj['type']
                 layout_coords_x[level_id, i] = obj['coords'][0]
                 layout_coords_y[level_id, i] = obj['coords'][1]
-        self.jax_layout = {
-            "types": jnp.array(layout_types),
-            "coords_x": jnp.array(layout_coords_x),
-            "coords_y": jnp.array(layout_coords_y),
-        }
+        self.jax_layout = {"types": jnp.array(layout_types), "coords_x": jnp.array(layout_coords_x), "coords_y": jnp.array(layout_coords_y)}
+        
         max_sprite_id = max(int(e) for e in SpriteIdx)
         dims_array = np.zeros((max_sprite_id + 1, 2), dtype=np.float32)
         for k, v in self.sprite_dims.items():
             dims_array[k] = v
         self.jax_sprite_dims = jnp.array(dims_array)
+        
         level_ids_sorted = sorted(LEVEL_ID_TO_TERRAIN_SPRITE.keys())
         self.jax_level_to_terrain = jnp.array([LEVEL_ID_TO_TERRAIN_SPRITE[k] for k in level_ids_sorted])
         self.jax_level_to_bank = jnp.array([LEVEL_ID_TO_BANK_IDX[k] for k in level_ids_sorted])
         self.jax_level_offsets = jnp.array([LEVEL_OFFSETS[k] for k in level_ids_sorted])
 
-        # ---- JIT Helper Initialization ----
+        # +++ 新增：预计算每个关卡的 scale, ox, oy +++
+        level_transforms = np.zeros((num_levels, 3), dtype=np.float32) # scale, ox, oy
+        for level_id in level_ids_sorted:
+            terrain_sprite_enum = LEVEL_ID_TO_TERRAIN_SPRITE[level_id]
+            terr_surf = self.sprites[terrain_sprite_enum]
+            tw, th = terr_surf.get_width(), terr_surf.get_height()
+            scale = min(WINDOW_WIDTH / tw, WINDOW_HEIGHT / th)
+            extra = TERRANT_SCALE_OVERRIDES.get(terrain_sprite_enum, 1.0)
+            scale *= float(extra)
+            sw, sh = int(tw * scale), int(th * scale)
+            level_offset = LEVEL_OFFSETS.get(level_id, (0,0))
+            ox = (WINDOW_WIDTH - sw) // 2 + level_offset[0]
+            oy = (WINDOW_HEIGHT - sh) // 2 + level_offset[1]
+            level_transforms[level_id] = [scale, ox, oy]
+        self.jax_level_transforms = jnp.array(level_transforms)
+        # +++++++++++++++++++++++++++++++++++++++++++++
+
+        # ---- JIT 辅助初始化 ----
         dummy_key = jax.random.PRNGKey(0)
         _, dummy_state = self.reset(dummy_key)
         tmp_obs, tmp_state = self.reset_level(dummy_key, jnp.int32(0), dummy_state) 
@@ -2660,304 +2660,11 @@ class JaxGravitar(JaxEnvironment):
         return state.lives
 
     def render(self, env_state: EnvState) -> Tuple[jnp.ndarray]:
-        # --------- pygame  ---------
-        if self.render_backend == "pygame":
-            scr = self.screen
-            mode_val = int(env_state.mode)
-            mode_str = "map" if mode_val == 0 else ("level" if mode_val == 1 else "arena")
-
-             # 1) Fallback for base canvas (base resolution)
-            if not hasattr(self, "base_w"):
-                self.base_w, self.base_h = 160, 192
-            if not hasattr(self, "world"):
-                self.world = pygame.Surface((self.base_w, self.base_h), pygame.SRCALPHA)
-
-            W, H = self.base_w, self.base_h
-
-            # Layer 0: Background
-            scr.fill((0, 0, 0))
-
-            # Layer 1: Map planets
-            if mode_str == "map":
-                W, H = WINDOW_WIDTH, WINDOW_HEIGHT
-                M = 12              # Margin to prevent items from being too close to the edge
-                MAP_SCALE = 3
-
-                def blit_center_scaled(spr, center, scale=1.0):
-                    if spr is None:
-                        return
-                    if scale != 1.0:
-                        w, h = spr.get_width(), spr.get_height()
-                        spr_use = pygame.transform.scale(spr, (int(w * scale), int(h * scale)))
-                    else:
-                        spr_use = spr
-                    rect = spr_use.get_rect(center=center)
-                    
-                    # Safe margin
-                    if rect.left < M: rect.left = M
-                    if rect.top < M: rect.top = M
-                    if rect.right > W - M: rect.right = W - M
-                    if rect.bottom > H - M: rect.bottom = H - M
-                    scr.blit(spr_use, rect.topleft)
-
-                px, py, pr, pi = self.planets
-                for k in range(len(px)):
-                    idx = SpriteIdx(int(pi[k]))
-                    if idx == SpriteIdx.REACTOR and bool(env_state.reactor_destroyed):
-                        continue
-                    if bool(env_state.planets_cleared_mask[k]):
-                        continue
-                    spr = self.sprites[idx]
-                    blit_center_scaled(spr, (int(px[k]), int(py[k])), MAP_SCALE)
-
-            # Layer 1.5: Saucer (visible in map/arena mode)
-            if mode_str in ("map", "arena"):
-                sau = env_state.saucer
-                if bool(sau.alive):
-                    sau_spr = self.sprites[SpriteIdx.ENEMY_SAUCER]
-                    if sau_spr is not None:
-                        rect = sau_spr.get_rect(center=(int(sau.x), int(sau.y)))
-                        scr.blit(sau_spr, rect.topleft)
-                    else:
-                        pygame.draw.circle(scr, (200, 200, 255), (int(sau.x), int(sau.y)), int(SAUCER_RADIUS))
-                elif int(sau.death_timer) > 0:
-                    boom = self.sprites[SpriteIdx.SAUCER_CRASH] if self.sprites else None
-                    t = int(sau.death_timer)
-                    progress = 1.0 - (t / max(1, int(SAUCER_EXPLOSION_FRAMES)))
-                    scale = 1.4 + 0.8 * progress
-                    if boom is not None:
-                        w, h = boom.get_width(), boom.get_height()
-                        boom_use = pygame.transform.scale(boom, (int(w * scale), int(h * scale)))
-                        rect = boom_use.get_rect(center=(int(sau.x), int(sau.y)))
-                        scr.blit(boom_use, rect.topleft)
-                    else:
-                        r = int(SAUCER_RADIUS) + int(10 * (1.0 + progress))
-                        pygame.draw.circle(scr, (255, 200, 120), (int(sau.x), int(sau.y)), r)
-
-            # Layer 2: Level (Terrain -> UFO -> Enemies/Turrets)
-            if mode_str == "level":
-                # ----- Terrain -----
-                terr_idx = int(env_state.terrain_sprite_idx)
-                terr_spr = self.sprites[SpriteIdx(terr_idx)] if self.sprites else None
-                if terr_spr is not None:
-                    tw, th = terr_spr.get_width(), terr_spr.get_height()
-                    W, H = WINDOW_WIDTH, WINDOW_HEIGHT
-                    
-                    # 1. Calculate the base scale factor for the terrain to fit the screen
-                    scale = min(W / tw, H / th)
-                    
-                    # 2. Apply the special scale override (`TERRANT_SCALE_OVERRIDES`)
-                    extra = TERRANT_SCALE_OVERRIDES.get(SpriteIdx(terr_idx), 1.0)
-                    scale *= float(extra)
-                    
-                    # 3. Create the final scaled image and its dimensions
-                    sw, sh = int(tw * scale), int(th * scale)
-                    terr_scaled = pygame.transform.scale(terr_spr, (sw, sh))
-                    
-                    # 4. Get the manual offset for the current level (`LEVEL_OFFSETS`)
-                    current_level_id = int(env_state.current_level)
-                    level_offset = LEVEL_OFFSETS.get(current_level_id, (0, 0))
-                    
-                    # 5. First, calculate the coordinates to center the scaled terrain
-                    ox = (W - sw) // 2
-                    oy = (H - sh) // 2
-                    
-                    # 6. Then apply the manually set offset
-                    ox += level_offset[0]
-                    oy += level_offset[1]
-                    
-                    # 7. Draw using the final calculated coordinates
-                    scr.blit(terr_scaled, (ox, oy))
-
-                # ----- UFO (alive or exploding) -----
-                if hasattr(env_state, "ufo"):
-                    u = env_state.ufo
-
-                    if int(u.death_timer) > 0:
-                        # Explosion rendering (can be changed to a `UFO_CRASH` sprite if available)
-                        boom = self.sprites[SpriteIdx.SAUCER_CRASH] if self.sprites else None
-                        t = int(u.death_timer)
-                        progress = 1.0 - (t / max(1, int(SAUCER_EXPLOSION_FRAMES)))  # 0..1
-                        boom_scale = 1.4 + 0.8 * progress
-                        if boom is not None:
-                            w, h = boom.get_width(), boom.get_height()
-                            boom_use = pygame.transform.scale(boom, (int(w * boom_scale), int(h * boom_scale)))
-                            rect = boom_use.get_rect(center=(int(u.x), int(u.y)))
-                            scr.blit(boom_use, rect.topleft)
-                        else:
-                            r = int(UFO_HIT_RADIUS) + int(10 * (1.0 + progress)) 
-                            pygame.draw.circle(scr, (255, 200, 120), (int(u.x), int(u.y)), r)
-
-                    elif bool(u.alive):
-                        ufo_spr = self.sprites[SpriteIdx.ENEMY_UFO] if self.sprites else None
-                        if ufo_spr is not None:
-                            rect = ufo_spr.get_rect(center=(int(u.x), int(u.y)))
-                            scr.blit(ufo_spr, rect.topleft)
-                        else:
-                            pygame.draw.circle(scr, (180, 255, 180), (int(u.x), int(u.y)), int(UFO_HIT_RADIUS))
-
-                # ----- Enemies/Turrets -----
-                ens = env_state.enemies
-                for i in range(len(ens.x)):
-                    # 1. Safety check: skip invalid or dead enemies
-                    if float(ens.w[i]) == 0.0 or int(ens.sprite_idx[i]) < 0:
-                        continue
-
-                    # 2. Get the enemy's native sprite and logical coordinates
-                    current_enemy_sprite_idx = int(ens.sprite_idx[i])
-                    enemy_sprite = self.sprites[SpriteIdx(current_enemy_sprite_idx)]
-                    
-                    if enemy_sprite is None:
-                        continue
-                    
-                    # Logical center coordinates
-                    ex, ey = int(ens.x[i]), int(ens.y[i])
-
-                    # 3. Check if the enemy is in an exploding state
-                    if int(ens.death_timer[i]) > 0:
-                        # If exploding, draw the explosion effect
-                        crash_sprite = self.sprites[SpriteIdx.ENEMY_CRASH]
-                        if crash_sprite is not None:
-                            # Dynamically scale the explosion based on the death timer
-                            progress = 1.0 - (int(ens.death_timer[i]) / ENEMY_EXPLOSION_FRAMES)
-                            crash_scale = 1.0 + progress * 2.0  # Adjust scale to prevent it from being too large
-                            
-                            w, h = crash_sprite.get_width(), crash_sprite.get_height()
-                            scaled_crash_sprite = pygame.transform.scale(crash_sprite, (int(w * crash_scale), int(h * crash_scale)))
-
-                            # The explosion effect is also positioned by its center
-                            rect = scaled_crash_sprite.get_rect(center=(ex, ey))
-                            scr.blit(scaled_crash_sprite, rect.topleft)
-                    else:
-                        # If in normal state, draw the enemy sprite
-                        
-                        # 4. Flip the sprite if necessary
-                        #    Note: We operate directly on the `enemy_sprite`
-                        if bool(ens.flip_y[i]):
-                            final_sprite_to_draw = pygame.transform.flip(enemy_sprite, False, True)
-                        else:
-                            final_sprite_to_draw = enemy_sprite
-                        
-                        # 5. Use center-point positioning to draw
-                        rect = final_sprite_to_draw.get_rect(center=(ex, ey))
-                        scr.blit(final_sprite_to_draw, rect.topleft)
-
-            # Layer 3: Bullets
-            pb = self.sprites[SpriteIdx.SHIP_BULLET] if self.sprites else None
-            eb = self.sprites[SpriteIdx.ENEMY_BULLET] if self.sprites else None
-            BULLET_SCALE = 3
-
-            def blit_bullet_center(surface, spr, x, y):
-                if spr is None:
-                    return
-                if BULLET_SCALE != 1.0:
-                    w, h = spr.get_width(), spr.get_height()
-                    spr_use = pygame.transform.scale(spr, (int(w * BULLET_SCALE), int(h * BULLET_SCALE)))
-                else:
-                    spr_use = spr
-                rect = spr_use.get_rect(center=(int(x), int(y)))
-                surface.blit(spr_use, rect.topleft)
-
-            # Enemy bullets
-            ebul = env_state.enemy_bullets
-            for i in range(len(ebul.x)):
-                if not bool(ebul.alive[i]): 
-                    continue
-                blit_bullet_center(scr, eb, float(ebul.x[i]), float(ebul.y[i]))
-
-            # UFO bullets (max one)
-            ubul = env_state.ufo_bullets
-            for i in range(len(ubul.x)):
-                if not bool(ubul.alive[i]): continue
-                blit_bullet_center(scr, eb, float(ubul.x[i]), float(ubul.y[i]))
-
-            # Player bullets
-            pbul = env_state.bullets
-            for i in range(len(pbul.x)):
-                if not bool(pbul.alive[i]): 
-                    continue
-                blit_bullet_center(scr, pb, float(pbul.x[i]), float(pbul.y[i]))
-
-            # Layer 4: Ship (on top of bullets)
-            cx, cy = int(env_state.state.x), int(env_state.state.y)
-            angle = float(env_state.state.angle)
-
-            ship_idx = SpriteIdx.SHIP_IDLE              # Default to idle state
-            keys = pygame.key.get_pressed()
-
-            if int(env_state.crash_timer) > 0:
-                ship_idx = SpriteIdx.SHIP_CRASH
-            elif keys[pygame.K_UP]:
-                ship_idx = SpriteIdx.SHIP_THRUST
-            elif keys[pygame.K_DOWN]:
-                ship_idx = SpriteIdx.SHIP_THRUST_BACK 
-
-            ship = self.sprites[ship_idx] if self.sprites else None
-            SHIP_SCALE = 3.0
-            if SHIP_SCALE != 1.0:
-                w, h = ship.get_width(), ship.get_height()
-                ship_base = pygame.transform.scale(ship, (int(w * SHIP_SCALE), int(h * SHIP_SCALE)))
-            else:
-                ship_base = ship
-
-            if ship_idx == SpriteIdx.SHIP_CRASH:
-                ship_rot = ship_base
-            else:
-                if not hasattr(self, "_ship_rot_cache"):
-                    self._ship_rot_cache = {}
-                angle_deg = (-math.degrees(angle) - 90.0) % 360.0
-                
-                q = int(round(angle_deg / 5.0)) * 5
-                cache_key = (int(ship_idx), q, int(SHIP_SCALE * 100))
-                ship_rot = self._ship_rot_cache.get(cache_key)
-                if ship_rot is None:
-                    ship_rot = pygame.transform.rotate(ship_base, q)
-                    self._ship_rot_cache[cache_key] = ship_rot
-
-            rect = ship_rot.get_rect(center=(cx, cy))
-            scr.blit(ship_rot, rect.topleft)
-
-            # Layer 5: HUD
-            self.score = int(env_state.score)
-            self.lives = int(env_state.lives) if hasattr(env_state, "lives") else getattr(self, "lives", 3)
-            self.draw_hud()
-
-            # Reactor destination point (only in reactor mode & active)
-            # === Only render the pink target at the CENTER of the game area if in reactor terrain and active ===
-            if (hasattr(env_state, "terrain_sprite_idx")
-                and env_state.terrain_sprite_idx == int(SpriteIdx.REACTOR_TERR)
-                and bool(env_state.reactor_dest_active)):
-
-                target_x_render = 60
-                target_y_render = 90
-
-                dest_surf = self.sprites[SpriteIdx.REACTOR_DEST]
-                dest_surf = pygame.transform.scale(dest_surf, (30, 10))
-                rect = dest_surf.get_rect(center=(int(target_x_render), int(target_y_render)))
-                self.screen.blit(dest_surf, rect)
-
-            # Game Over
-            if bool(env_state.done):
-                font_big = pygame.font.SysFont("Arial", 72, bold=True)
-                text = font_big.render("GAME OVER", True, (255, 0, 0))
-                text_rect = text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
-                scr.blit(text, text_rect)
-
-            pygame.display.flip()
-
-            # Pygame branch returns a placeholder (to maintain a consistent interface)
-            dummy_image = jnp.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=jnp.uint8)
-            return (dummy_image,)
-
-        # --------- JAX Branch ---------
-        out = self.renderer.render(env_state)
-        if out is None:
-            frame = jnp.zeros((WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=jnp.uint8)
-        else:
-            arr = np.asarray(out)
-            if arr.ndim == 3 and arr.shape[0] in (3, 4) and arr.shape[0] != arr.shape[-1]:
-                arr = np.transpose(arr, (1, 2, 0))
-            frame = jnp.array(arr, dtype=jnp.uint8)
+        """
+        Renders the environment state to an image using the JAX renderer.
+        This method is pure, JIT-compatible, and the single source of truth for rendering.
+        """
+        frame = self.renderer.render(env_state)
         return (frame,)
     
     def build_terrain_mask_and_transform(self, terr_idx: int):
@@ -3141,38 +2848,29 @@ class JaxGravitar(JaxEnvironment):
     def reset_level(self, key: jnp.ndarray, level_id: jnp.ndarray, prev_env_state: EnvState):
         level_id = jnp.asarray(level_id, dtype=jnp.int32)
 
-        # === 1. Get level data via JAX array indexing ===
+        # === 1. 通过 JAX 数组索引获取所有关卡数据 ===
         level_offset = self.jax_level_offsets[level_id]
         terrain_sprite_idx = self.jax_level_to_terrain[level_id]
         bank_idx = self.jax_level_to_bank[level_id]
+        
+        # 使用预计算的变换值
+        transform = self.jax_level_transforms[level_id]
+        scale, ox, oy = transform[0], transform[1], transform[2]
 
-        # This part depends on Pygame and is only for one-time setup values.
-        # It executes "outside" of the pure_callback context.
-        terr_surf = self.sprites[terrain_sprite_idx.item()]
-        tw, th = terr_surf.get_width(), terr_surf.get_height()
-        scale = min(WINDOW_WIDTH / tw, WINDOW_HEIGHT / th)
-        extra = TERRANT_SCALE_OVERRIDES.get(SpriteIdx(terrain_sprite_idx.item()), 1.0)
-        scale *= float(extra)
-        sw, sh = int(tw * scale), int(th * scale)
-        ox = (WINDOW_WIDTH - sw) // 2 + level_offset[0]
-        oy = (WINDOW_HEIGHT - sh) // 2 + level_offset[1]
-
-        # === 2. Create objects in the level using fori_loop ===
+        # === 2. 使用 fori_loop 创建关卡中的对象 (无 Pygame 依赖) ===
         def loop_body(i, carry):
             enemies, tanks, e_idx, t_idx = carry
             obj_type = self.jax_layout["types"][level_id, i]
             
             def place_obj(val):
                 enemies_in, tanks_in, e_idx_in, t_idx_in = val
-                
                 orig_idx = jnp.where(obj_type == SpriteIdx.ENEMY_ORANGE_FLIPPED, SpriteIdx.ENEMY_ORANGE, obj_type)
                 w, h = self.jax_sprite_dims[orig_idx]
-                
                 x = ox + self.jax_layout["coords_x"][level_id, i] * scale
                 y = oy + self.jax_layout["coords_y"][level_id, i] * scale
-
                 is_tank = (obj_type == SpriteIdx.FUEL_TANK).astype(jnp.int32)
                 
+                # ... (这部分逻辑保持不变) ...
                 new_enemies = enemies_in._replace(
                     x=enemies_in.x.at[e_idx_in].set(jnp.where(is_tank, -1.0, x)),
                     y=enemies_in.y.at[e_idx_in].set(jnp.where(is_tank, -1.0, y)),
@@ -3189,22 +2887,20 @@ class JaxGravitar(JaxEnvironment):
                     sprite_idx=tanks_in.sprite_idx.at[t_idx_in].set(jnp.where(is_tank, obj_type, -1)),
                     active=tanks_in.active.at[t_idx_in].set(jnp.where(is_tank, True, False)),
                 )
-
                 return new_enemies, new_tanks, e_idx_in + (1 - is_tank), t_idx_in + is_tank
 
             return jax.lax.cond(obj_type != -1, place_obj, lambda x: x, (enemies, tanks, e_idx, t_idx))
 
         init_enemies = create_empty_enemies()
         init_tanks = FuelTanks(
-            x=jnp.full((MAX_ENEMIES,), -1.0, dtype=jnp.float32), y=jnp.full((MAX_ENEMIES,), -1.0, dtype=jnp.float32),
-            w=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32), h=jnp.zeros((MAX_ENEMIES,), dtype=jnp.float32),
-            sprite_idx=jnp.full((MAX_ENEMIES,), -1, dtype=jnp.int32), active=jnp.zeros((MAX_ENEMIES,), dtype=bool)
+            x=jnp.full((MAX_ENEMIES,), -1.0), y=jnp.full((MAX_ENEMIES,), -1.0),
+            w=jnp.zeros((MAX_ENEMIES,)), h=jnp.zeros((MAX_ENEMIES,)),
+            sprite_idx=jnp.full((MAX_ENEMIES,), -1), active=jnp.zeros((MAX_ENEMIES,), dtype=bool)
         )
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(0, self.jax_layout["types"].shape[1], loop_body, (init_enemies, init_tanks, 0, 0))
 
-        # === 3. Assemble the final EnvState ===
+        # === 3. 组装最终的 EnvState ===
         ship_state = make_level_start_state(level_id)
-        
         env_state = prev_env_state._replace(
             mode=jnp.int32(1), state=ship_state,
             bullets=create_empty_bullets_64(), cooldown=jnp.int32(0),
@@ -3214,8 +2910,8 @@ class JaxGravitar(JaxEnvironment):
             key=key, crash_timer=jnp.int32(0), current_level=level_id,
             terrain_sprite_idx=terrain_sprite_idx,
             terrain_mask=jnp.zeros((WINDOW_HEIGHT, WINDOW_WIDTH), dtype=jnp.uint8),
-            terrain_scale=jnp.array(scale, dtype=jnp.float32),
-            terrain_offset=jnp.array([ox, oy], dtype=jnp.float32),
+            terrain_scale=scale,
+            terrain_offset=jnp.array([ox, oy]),
             terrain_bank_idx=bank_idx,
             reactor_dest_active=(level_id == 4),
             reactor_dest_x=jnp.float32(95), reactor_dest_y=jnp.float32(114),

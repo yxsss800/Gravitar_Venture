@@ -1480,16 +1480,16 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
     def observation_space(self) -> spaces.Dict:
         """Returns the observation space of the environment."""
         player_space = spaces.Dict({
-            "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.float32),
-            "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.float32),
+            "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.float64),
+            "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.float64),
             "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int32),
             "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int32),
         })
         monster_space = spaces.Dict({
             "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(self.consts.TOTAL_MONSTERS,),
-                            dtype=jnp.float32),
+                            dtype=jnp.float64),
             "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(self.consts.TOTAL_MONSTERS,),
-                            dtype=jnp.float32),
+                            dtype=jnp.float64),
             "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int32),
             "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int32),
         })
@@ -1508,15 +1508,15 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
     def obs_to_flat_array(self, obs: VentureObservation) -> jnp.ndarray:
         """Converts an observation NamedTuple to a flat JAX array."""
         return jnp.concatenate([
-            obs.player.x.flatten(),
-            obs.player.y.flatten(),
-            obs.player.width.flatten().astype(jnp.float32),
-            obs.player.height.flatten().astype(jnp.float32),
-            obs.monsters.x.flatten(),
-            obs.monsters.y.flatten(),
-            obs.monsters.width.flatten().astype(jnp.float32),
-            obs.monsters.height.flatten().astype(jnp.float32),
-            obs.game_over.flatten().astype(jnp.float32)
+            obs.player.x.flatten().astype(jnp.float64),
+            obs.player.y.flatten().astype(jnp.float64),
+            obs.player.width.flatten().astype(jnp.float64),
+            obs.player.height.flatten().astype(jnp.float64),
+            obs.monsters.x.flatten().astype(jnp.float64),
+            obs.monsters.y.flatten().astype(jnp.float64),
+            obs.monsters.width.flatten().astype(jnp.float64),
+            obs.monsters.height.flatten().astype(jnp.float64),
+            obs.game_over.flatten().astype(jnp.float64)
         ])
 
 

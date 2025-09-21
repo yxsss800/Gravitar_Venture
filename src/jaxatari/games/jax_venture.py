@@ -67,7 +67,7 @@ def _create_wall_map_from_sprite(sprite_path: str) -> chex.Array:
         sprite_rgba = jax.image.resize(sprite_rgba, target_shape, method='nearest').astype(jnp.uint8)
 
     rgb_channels = sprite_rgba[:, :, :3]
-    color_sum = jnp.sum(rgb_channels.astype(jnp.int64), axis=-1)
+    color_sum = jnp.sum(rgb_channels.astype(jnp.int32), axis=-1)
     wall_map = jnp.where(color_sum > 0, jnp.uint8(1), jnp.uint8(0))
     return wall_map
 
@@ -331,10 +331,10 @@ class VentureConstants(NamedTuple):
     LIVES: int = 4
     PLAYER_INITIAL_X: float = 45.0
     PLAYER_INITIAL_Y: float = 185.0
-    FINAL_GAME_OVER_DELAY_FRAMES: chex.Array = jnp.array(60)  # Delay before fully ending the game.
-    LIFE_LOST_DELAY_FRAMES: chex.Array = jnp.array(45)  # Delay after losing a life (e.g., 1.5 seconds @ 30fps).
+    FINAL_GAME_OVER_DELAY_FRAMES: chex.Array = jnp.array(60, dtype=jnp.int32)  # Delay before fully ending the game.
+    LIFE_LOST_DELAY_FRAMES: chex.Array = jnp.array(45, dtype=jnp.int32)  # Delay after losing a life (e.g., 1.5 seconds @ 30fps).
 
-    WORLD_TRANSITION_DELAY_FRAMES: chex.Array = jnp.array(90)  # Pause duration when transitioning between worlds.
+    WORLD_TRANSITION_DELAY_FRAMES: chex.Array = jnp.array(90, dtype=jnp.int32)  # Pause duration when transitioning between worlds.
 
     PROJECTILE_SPEED: float = jnp.array(2.0, dtype=jnp.float64)
     PROJECTILE_RADIUS: int = 2
@@ -470,7 +470,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             x=jnp.array(0.0, dtype=jnp.float64), y=jnp.array(0.0, dtype=jnp.float64),
             dx=jnp.array(0.0, dtype=jnp.float64), dy=jnp.array(0.0, dtype=jnp.float64),
             active=jnp.array(False),
-            lifetime=jnp.array(0, dtype=jnp.int64)
+            lifetime=jnp.array(0, dtype=jnp.int32)
         )
 
         # Initialize monsters for World 1 Main Map (level 0).
@@ -492,7 +492,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             x=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.float64),
             y=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.float64),
             active=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.bool_),
-            lifetime=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.int64)
+            lifetime=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.int32)
         )
 
         chaser_state = ChaserState(
@@ -515,18 +515,18 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             lasers=laser_state,
             kill_bonus_active=jnp.zeros(num_rooms, dtype=jnp.bool_),
             key=key,
-            game_over_timer=jnp.array(0, dtype=jnp.int64),  # Change this to int64
-            life_lost_timer=jnp.array(0, dtype=jnp.int64),  # Change this to int64
-            level_timer=jnp.array(0, dtype=jnp.int64),  # Change this to int64
-            step_counter=jnp.array(0, dtype=jnp.int64),  # Change this to int64
-            score=jnp.array(0, dtype=jnp.int64),  # Change this to int64
-            lives=jnp.array(self.consts.LIVES, dtype=jnp.int64),  # Change this to int64
+            game_over_timer=jnp.array(0, dtype=jnp.int32),  # Change this to int32
+            life_lost_timer=jnp.array(0, dtype=jnp.int32),  # Change this to int32
+            level_timer=jnp.array(0, dtype=jnp.int32),  # Change this to int32
+            step_counter=jnp.array(0, dtype=jnp.int32),  # Change this to int32
+            score=jnp.array(0, dtype=jnp.int32),  # Change this to int32
+            lives=jnp.array(self.consts.LIVES, dtype=jnp.int32),  # Change this to int32
             is_in_collision=jnp.array(False),
-            current_level=jnp.array(0, dtype=jnp.int64),  # Change this to int64
-            world_level=jnp.array(1, dtype=jnp.int64),  # Change this to int64
-            world_transition_timer=jnp.array(0, dtype=jnp.int64),
-            last_level=jnp.array(0, dtype=jnp.int64),
-            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int64),
+            current_level=jnp.array(0, dtype=jnp.int32),  # Change this to int32
+            world_level=jnp.array(1, dtype=jnp.int32),  # Change this to int32
+            world_transition_timer=jnp.array(0, dtype=jnp.int32),
+            last_level=jnp.array(0, dtype=jnp.int32),
+            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32),
             latest_reward=jnp.array(0.0, dtype=jnp.float64)
         )
 
@@ -615,7 +615,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
 
                     def _fill_one_portal(portal_idx_local, current_map):
                         portal_data = self.consts.JAX_TRANSITIONS[world_idx_inner, 0, portal_idx_local]
-                        to_level = portal_data[4].astype(jnp.int64)
+                        to_level = portal_data[4].astype(jnp.int32)
                         is_valid_portal = portal_data[2] > 0
                         is_portal_locked = jax.lax.cond(
                             to_level > 0,
@@ -694,7 +694,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
                 new_y = proj.y + proj.dy * self.consts.PROJECTILE_SPEED
                 world_idx = s.world_level - 1
                 wall_map = self.consts.ALL_WALL_MAPS_PER_WORLD[world_idx, s.current_level]
-                map_val = wall_map[jnp.clip(new_y.astype(jnp.int64), 0, 209), jnp.clip(new_x.astype(jnp.int64), 0, 159)]
+                map_val = wall_map[jnp.clip(new_y.astype(jnp.int32), 0, 209), jnp.clip(new_x.astype(jnp.int32), 0, 159)]
                 hit_wall = (map_val == 1)
                 proj_radius = self.consts.PROJECTILE_RADIUS
                 mon_x, mon_y = s.monsters.x, s.monsters.y
@@ -796,7 +796,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             state_after_chest_collection = _check_and_collect_chest(state_with_updated_projectile)
 
             # Update level timer and spawn chaser if conditions met.
-            new_level_timer = jax.lax.cond(state_after_chest_collection.current_level > 0, lambda: state_after_chest_collection.level_timer + 1, lambda: jnp.array(0))
+            new_level_timer = jax.lax.cond(state_after_chest_collection.current_level > 0, lambda: state_after_chest_collection.level_timer + 1, lambda: jnp.array(0, dtype=jnp.int32))
             def spawn_chaser_if_needed(s: GameState) -> GameState:
                 should_spawn = (s.current_level > 0) & (new_level_timer == self.consts.CHASER_SPAWN_FRAMES) & ~s.chaser.active
                 def _spawn(current_s: GameState) -> GameState:
@@ -940,13 +940,13 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             ),
             chests_active=jnp.ones_like(state.chests_active),  # All chests become collectible again.
             kill_bonus_active=jnp.zeros_like(state.kill_bonus_active),
-            current_level=jnp.array(0),  # Return to the main map of the new world.
-            last_level=jnp.array(0),
-            level_timer=jnp.array(0),
+            current_level=jnp.array(0, dtype=jnp.int32),  # Return to the main map of the new world.
+            last_level=jnp.array(0, dtype=jnp.int32),
+            level_timer=jnp.array(0, dtype=jnp.int32),
             key=key,
             world_level=next_world_level_id,  # Increment world level.
-            world_transition_timer=jnp.array(0),
-            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int64)
+            world_transition_timer=jnp.array(0, dtype=jnp.int32),
+            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32)
         )
 
     def _respawn_entities(self, state: GameState) -> GameState:
@@ -987,7 +987,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             x=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.float64),
             y=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.float64),
             active=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.bool_),
-            lifetime=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.int64)
+            lifetime=jnp.zeros(self.consts.MAX_DEAD_MONSTERS, dtype=jnp.int32)
         )
 
         inactive_chaser_state = ChaserState(
@@ -1007,11 +1007,11 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             chaser=inactive_chaser_state,
             lasers=initial_laser_state,
             key=key,
-            current_level=jnp.array(0),
+            current_level=jnp.array(0, dtype=jnp.int32),
             is_in_collision=jnp.array(False),
-            level_timer=jnp.array(0),
+            level_timer=jnp.array(0, dtype=jnp.int32),
             kill_bonus_active=jnp.zeros_like(state.kill_bonus_active),
-            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int64)
+            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32)
         )
 
     def _handle_level_transitions(self, state: GameState) -> GameState:
@@ -1020,7 +1020,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
 
         def check_and_transition(current_state, flat_params):
             rect, to_level_float, spawn_pos = flat_params[0:4], flat_params[4], flat_params[5:7]
-            to_level = to_level_float.astype(jnp.int64)
+            to_level = to_level_float.astype(jnp.int32)
             rx, ry, rw, rh = rect[0], rect[1], rect[2], rect[3]
             in_portal = (px > rx) & (px < rx + rw) & (py > ry) & (py < ry + rh)
 
@@ -1086,10 +1086,10 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
                     player=new_player,
                     monsters=new_monsters,
                     dead_monsters=new_dead_monsters,
-                    level_timer=jnp.array(0),
+                    level_timer=jnp.array(0, dtype=jnp.int32),
                     chaser=inactive_chaser,
                     lasers=initial_lasers,
-                    collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int64),
+                    collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32),
                     is_in_collision=jnp.array(False)
                 )
 
@@ -1126,8 +1126,8 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             corners_x = jnp.array([x - hw, x + hw - 1, x - hw, x + hw - 1])
             corners_y = jnp.array([y - hh, y - hh, y + hh - 1, y + hh - 1])
 
-            clipped_corners_x = jnp.clip(corners_x.astype(jnp.int64), 0, self.consts.SCREEN_WIDTH - 1)
-            clipped_corners_y = jnp.clip(corners_y.astype(jnp.int64), 0, self.consts.SCREEN_HEIGHT - 1)
+            clipped_corners_x = jnp.clip(corners_x.astype(jnp.int32), 0, self.consts.SCREEN_WIDTH - 1)
+            clipped_corners_y = jnp.clip(corners_y.astype(jnp.int32), 0, self.consts.SCREEN_HEIGHT - 1)
 
             map_vals = wall_map[clipped_corners_y, clipped_corners_x]
 
@@ -1336,8 +1336,8 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             sample_points_x = pos_x + dx_samples
             sample_points_y = pos_y + dy_samples
 
-            clipped_ix = jnp.clip(jnp.round(sample_points_x).astype(jnp.int64), 0, self.consts.SCREEN_WIDTH - 1)
-            clipped_iy = jnp.clip(jnp.round(sample_points_y).astype(jnp.int64), 0, self.consts.SCREEN_HEIGHT - 1)
+            clipped_ix = jnp.clip(jnp.round(sample_points_x).astype(jnp.int32), 0, self.consts.SCREEN_WIDTH - 1)
+            clipped_iy = jnp.clip(jnp.round(sample_points_y).astype(jnp.int32), 0, self.consts.SCREEN_HEIGHT - 1)
 
             map_vals = wall_map[clipped_iy, clipped_ix]
             return jnp.any(map_vals == 1)
@@ -1346,8 +1346,8 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             corners_x = jnp.array([pos_x - player_hw, pos_x + player_hw - 1, pos_x - player_hw, pos_x + player_hw - 1])
             corners_y = jnp.array([pos_y - player_hh, pos_y - player_hh, pos_y + player_hh - 1, pos_y + player_hh - 1])
 
-            clipped_corners_x = jnp.clip(corners_x.astype(jnp.int64), 0, self.consts.SCREEN_WIDTH - 1)
-            clipped_corners_y = jnp.clip(corners_y.astype(jnp.int64), 0, self.consts.SCREEN_HEIGHT - 1)
+            clipped_corners_x = jnp.clip(corners_x.astype(jnp.int32), 0, self.consts.SCREEN_WIDTH - 1)
+            clipped_corners_y = jnp.clip(corners_y.astype(jnp.int32), 0, self.consts.SCREEN_HEIGHT - 1)
 
             map_vals = wall_map[clipped_corners_y, clipped_corners_x]
             return jnp.any(map_vals == 1)
@@ -1443,20 +1443,20 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         is_in_room = state.current_level != 0
 
         player_width = jax.lax.cond(is_in_room,
-                                    lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_WIDTH, dtype=jnp.int64),
-                                    lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_WIDTH, dtype=jnp.int64))
+                                    lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_WIDTH, dtype=jnp.int32),
+                                    lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_WIDTH, dtype=jnp.int32))
 
         player_height = jax.lax.cond(is_in_room,
-                                     lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_HEIGHT, dtype=jnp.int64),
-                                     lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_HEIGHT, dtype=jnp.int64))
+                                     lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_HEIGHT, dtype=jnp.int32),
+                                     lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_HEIGHT, dtype=jnp.int32))
 
         player = EntityPosition(x=state.player.x, y=state.player.y,
                                 width=player_width,
                                 height=player_height)
 
         monsters = EntityPosition(x=state.monsters.x, y=state.monsters.y,
-                                  width=jnp.array(self.consts.MONSTER_RENDER_WIDTH, dtype=jnp.int64),
-                                  height=jnp.array(self.consts.MONSTER_RENDER_HEIGHT, dtype=jnp.int64))
+                                  width=jnp.array(self.consts.MONSTER_RENDER_WIDTH, dtype=jnp.int32),
+                                  height=jnp.array(self.consts.MONSTER_RENDER_HEIGHT, dtype=jnp.int32))
 
         game_over_flag = state.game_over_timer > 0
 
@@ -1483,21 +1483,21 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         player_space = spaces.Dict({
             "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.float64),
             "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.float64),
-            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int64),
-            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int64),
+            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int32),
+            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int32),
         })
         monster_space = spaces.Dict({
             "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(self.consts.TOTAL_MONSTERS,),
                             dtype=jnp.float64),
             "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(self.consts.TOTAL_MONSTERS,),
                             dtype=jnp.float64),
-            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int64),
-            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int64),
+            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int32),
+            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int32),
         })
         return spaces.Dict({
             "player": player_space,
             "monsters": monster_space,
-            "game_over": spaces.Box(low=0, high=1, shape=(), dtype=jnp.int64),
+            "game_over": spaces.Box(low=0, high=1, shape=(), dtype=jnp.int32),
         })
 
     def image_space(self) -> spaces.Box:
@@ -1726,8 +1726,8 @@ class VentureRenderer(JAXGameRenderer):
                 def _render_it(canvas: chex.Array) -> chex.Array:
                     chest_pos = self.consts.CHEST_POSITIONS[chest_lookup_idx]
                     chest_sprite_frame = jr.get_sprite_frame(self.sprites['chests'][world_idx], chest_idx)
-                    px = jnp.floor(chest_pos[0] - self.consts.CHEST_WIDTH / 2).astype(jnp.int64)
-                    py = jnp.floor(chest_pos[1] - self.consts.CHEST_HEIGHT / 2).astype(jnp.int64)
+                    px = jnp.floor(chest_pos[0] - self.consts.CHEST_WIDTH / 2).astype(jnp.int32)
+                    py = jnp.floor(chest_pos[1] - self.consts.CHEST_HEIGHT / 2).astype(jnp.int32)
                     return jr.render_at(canvas, px, py, chest_sprite_frame)
 
                 return jax.lax.cond(should_draw, _render_it, lambda canvas: canvas, canvas_in)
@@ -1761,8 +1761,8 @@ class VentureRenderer(JAXGameRenderer):
 
                     def _draw_active_monster(can_inner):
                         mx, my = jnp.floor(state.monsters.x[i] - self.consts.MONSTER_RENDER_WIDTH / 2).astype(
-                            jnp.int64), \
-                            jnp.floor(state.monsters.y[i] - self.consts.MONSTER_RENDER_HEIGHT / 2).astype(jnp.int64)
+                            jnp.int32), \
+                            jnp.floor(state.monsters.y[i] - self.consts.MONSTER_RENDER_HEIGHT / 2).astype(jnp.int32)
                         return jr.render_at(can_inner, mx, my, current_level_monster_frame)
                     return jax.lax.cond(should_draw_monster, _draw_active_monster, lambda c_inner: c_inner, can)
 
@@ -1802,9 +1802,9 @@ class VentureRenderer(JAXGameRenderer):
 
                     def _draw_dead_monster_sprite(can_inner):
                         dmx, dmy = jnp.floor(state.dead_monsters.x[i] - self.consts.MONSTER_RENDER_WIDTH / 2).astype(
-                            jnp.int64), \
+                            jnp.int32), \
                             jnp.floor(state.dead_monsters.y[i] - self.consts.MONSTER_RENDER_HEIGHT / 2).astype(
-                                jnp.int64)
+                                jnp.int32)
                         return jr.render_at(can_inner, dmx, dmy, current_level_dead_monster_frame)
 
                     return jax.lax.cond(should_draw_dead_monster, _draw_dead_monster_sprite, lambda c_inner: c_inner,
@@ -1824,8 +1824,8 @@ class VentureRenderer(JAXGameRenderer):
         # Draw chaser monster if active.
         def draw_chaser(c):
             chaser_sprite_frame = jr.get_sprite_frame(self.sprites['chaser'], 0)
-            px = jnp.floor(state.chaser.x - self.consts.CHASER_RENDER_WIDTH / 2).astype(jnp.int64)
-            py = jnp.floor(state.chaser.y - self.consts.CHASER_RENDER_HEIGHT / 2).astype(jnp.int64)
+            px = jnp.floor(state.chaser.x - self.consts.CHASER_RENDER_WIDTH / 2).astype(jnp.int32)
+            py = jnp.floor(state.chaser.y - self.consts.CHASER_RENDER_HEIGHT / 2).astype(jnp.int32)
             return jr.render_at(c, px, py, chaser_sprite_frame)
 
         canvas = jax.lax.cond(state.chaser.active, draw_chaser, lambda c: c, canvas)
@@ -1842,8 +1842,8 @@ class VentureRenderer(JAXGameRenderer):
                     (int(target_height), int(target_width), 4),
                     method='nearest'
                 ).astype(jnp.uint8)
-                px = jnp.floor(laser_pos_x).astype(jnp.int64)
-                py = jnp.floor(laser_pos_y).astype(jnp.int64)
+                px = jnp.floor(laser_pos_x).astype(jnp.int32)
+                py = jnp.floor(laser_pos_y).astype(jnp.int32)
                 return jr.render_at(canvas, px, py, resized_sprite)
 
             room_w = x_span_end - x_span_start
@@ -1876,14 +1876,14 @@ class VentureRenderer(JAXGameRenderer):
         is_in_room = state.current_level != 0
 
         def draw_player_on_main_map(c):
-            px = jnp.floor(state.player.x - self.consts.PLAYER_DOT_RENDER_WIDTH / 2).astype(jnp.int64)
-            py = jnp.floor(state.player.y - self.consts.PLAYER_DOT_RENDER_HEIGHT / 2).astype(jnp.int64)
+            px = jnp.floor(state.player.x - self.consts.PLAYER_DOT_RENDER_WIDTH / 2).astype(jnp.int32)
+            py = jnp.floor(state.player.y - self.consts.PLAYER_DOT_RENDER_HEIGHT / 2).astype(jnp.int32)
             player_sprite_frame = jr.get_sprite_frame(self.sprites['player_dot'][world_idx], 0)
             return jr.render_at(c, px, py, player_sprite_frame)
 
         def draw_player_in_room(c):
-            px = jnp.floor(state.player.x - self.consts.PLAYER_DETAILED_RENDER_WIDTH / 2).astype(jnp.int64)
-            py = jnp.floor(state.player.y - self.consts.PLAYER_DETAILED_RENDER_HEIGHT / 2).astype(jnp.int64)
+            px = jnp.floor(state.player.x - self.consts.PLAYER_DETAILED_RENDER_WIDTH / 2).astype(jnp.int32)
+            py = jnp.floor(state.player.y - self.consts.PLAYER_DETAILED_RENDER_HEIGHT / 2).astype(jnp.int32)
             player_sprite_frame = jr.get_sprite_frame(self.sprites['player_detailed'][world_idx], 0)
             return jr.render_at(c, px, py, player_sprite_frame)
 
@@ -1898,8 +1898,8 @@ class VentureRenderer(JAXGameRenderer):
             dot_x = state.player.x + state.player.last_dx * self.consts.AIMING_DOT_OFFSET
             dot_y = state.player.y + state.player.last_dy * self.consts.AIMING_DOT_OFFSET
 
-            px = jnp.floor(dot_x - proj_size_x / 2).astype(jnp.int64)
-            py = jnp.floor(dot_y - proj_size_y / 2).astype(jnp.int64)
+            px = jnp.floor(dot_x - proj_size_x / 2).astype(jnp.int32)
+            py = jnp.floor(dot_y - proj_size_y / 2).astype(jnp.int32)
             return jr.render_at(c, px, py, proj_sprite)
 
         def draw_projectile(c):
@@ -1907,8 +1907,8 @@ class VentureRenderer(JAXGameRenderer):
             proj_size_x = proj_sprite.shape[1]
             proj_size_y = proj_sprite.shape[0]
 
-            px = jnp.floor(state.projectile.x - proj_size_x / 2).astype(jnp.int64)
-            py = jnp.floor(state.projectile.y - proj_size_y / 2).astype(jnp.int64)
+            px = jnp.floor(state.projectile.x - proj_size_x / 2).astype(jnp.int32)
+            py = jnp.floor(state.projectile.y - proj_size_y / 2).astype(jnp.int32)
             return jr.render_at(c, px, py, proj_sprite)
 
         should_draw_aiming_dot = is_in_room & ~state.projectile.active

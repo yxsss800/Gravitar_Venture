@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import jax.tree_util
 import chex
 import pygame
+from jax import Array
+from numpy import ndarray, dtype
 
 import jaxatari.spaces as spaces
 from jaxatari.environment import JaxEnvironment
@@ -417,6 +419,7 @@ class GameState(NamedTuple):
     world_transition_timer: chex.Array  # Countdown timer for world transition.
     last_level: chex.Array  # Tracks the previous level to detect transitions.
     collected_chest_in_current_visit: chex.Array # Records if a chest was collected in the current room visit.
+    latest_reward: chex.Array
 
 
 class EntityPosition(NamedTuple):
@@ -439,6 +442,7 @@ class VentureInfo(NamedTuple):
     time: jnp.ndarray
     score: jnp.ndarray
     lives: jnp.ndarray
+    all_rewards: chex.Array
 
 
 class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, VentureConstants]):
@@ -521,13 +525,15 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             world_level=jnp.array(1),  # Start at world 1.
             world_transition_timer=jnp.array(0),
             last_level=jnp.array(0),
-            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32)
+            collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32),
+            latest_reward=jnp.array(0.0)
         )
 
         return self._get_observation(state), state
 
     @partial(jax.jit, static_argnums=(0,))
-    def step(self, state: GameState, action: int) -> tuple[VentureObservation, GameState, float, bool, VentureInfo]:
+    def step(self, state: GameState, action: int) -> tuple[
+        VentureObservation, Any, Array | ndarray[Any, dtype[Any]], bool, VentureInfo]:
         """Performs one step of the environment given the agent's actions."""
         # Store the current level before any transitions occur.
         state = state._replace(last_level=state.current_level)
@@ -860,6 +866,8 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             )
             return check_for_progression(final_state_for_frame)
 
+        previous_score = state.score
+
         # Main logic branch: prioritize timers (world transition, game over, life lost) over normal gameplay.
         new_state = jax.lax.cond(
             state.world_transition_timer > 0,
@@ -877,11 +885,13 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             ),
             state
         )
-        reward = 0.0
+        reward = (new_state.score - previous_score).astype(jnp.float32)
+        new_state = new_state._replace(latest_reward=reward)
 
         done = self._get_done(new_state)
         info = self._get_info(new_state)
         obs = self._get_observation(new_state)
+
         return obs, new_state, reward, done, info
 
     def _perform_world_switch(self, state: GameState) -> GameState:
@@ -1461,7 +1471,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
 
     def _get_info(self, state: GameState) -> VentureInfo:
         """Provides auxiliary information about the game state."""
-        return VentureInfo(time=state.step_counter, score=state.score, lives=state.lives)
+        return VentureInfo(time=state.step_counter, score=state.score, lives=state.lives, all_rewards=jnp.array([state.latest_reward]))
 
     def action_space(self) -> spaces.Discrete:
         """Returns the action space of the environment."""
@@ -1500,8 +1510,12 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         return jnp.concatenate([
             obs.player.x.flatten(),
             obs.player.y.flatten(),
+            obs.player.width.flatten().astype(jnp.float32),
+            obs.player.height.flatten().astype(jnp.float32),
             obs.monsters.x.flatten(),
             obs.monsters.y.flatten(),
+            obs.monsters.width.flatten().astype(jnp.float32),
+            obs.monsters.height.flatten().astype(jnp.float32),
             obs.game_over.flatten().astype(jnp.float32)
         ])
 

@@ -17,10 +17,8 @@ from jaxatari.environment import JaxEnvironment
 from jaxatari.renderers import JAXGameRenderer
 from jaxatari.rendering import jax_rendering_utils as jr
 
+
 class VentureAction(IntEnum):
-    """
-    An exact mirror of JAXAtariAction to ensure 100% compatibility with play.py.
-    """
     NOOP = 0
     FIRE = 1
     UP = 2
@@ -45,12 +43,12 @@ _FIRE_ACTIONS = jnp.array([
     VentureAction.FIRE, VentureAction.UP_FIRE, VentureAction.RIGHT_FIRE,
     VentureAction.LEFT_FIRE, VentureAction.DOWN_FIRE, VentureAction.UP_RIGHT_FIRE,
     VentureAction.UP_LEFT_FIRE, VentureAction.DOWN_RIGHT_FIRE, VentureAction.DOWN_LEFT_FIRE
-])
+], dtype=jnp.int32)
 
-_UP_ACTIONS = jnp.array([VentureAction.UP, VentureAction.UP_RIGHT, VentureAction.UP_LEFT, VentureAction.UP_FIRE, VentureAction.UP_RIGHT_FIRE, VentureAction.UP_LEFT_FIRE])
-_DOWN_ACTIONS = jnp.array([VentureAction.DOWN, VentureAction.DOWN_RIGHT, VentureAction.DOWN_LEFT, VentureAction.DOWN_FIRE, VentureAction.DOWN_RIGHT_FIRE, VentureAction.DOWN_LEFT_FIRE])
-_LEFT_ACTIONS = jnp.array([VentureAction.LEFT, VentureAction.UP_LEFT, VentureAction.DOWN_LEFT, VentureAction.LEFT_FIRE, VentureAction.UP_LEFT_FIRE, VentureAction.DOWN_LEFT_FIRE])
-_RIGHT_ACTIONS = jnp.array([VentureAction.RIGHT, VentureAction.UP_RIGHT, VentureAction.DOWN_RIGHT, VentureAction.RIGHT_FIRE, VentureAction.UP_RIGHT_FIRE, VentureAction.DOWN_RIGHT_FIRE])
+_UP_ACTIONS = jnp.array([VentureAction.UP, VentureAction.UP_RIGHT, VentureAction.UP_LEFT, VentureAction.UP_FIRE, VentureAction.UP_RIGHT_FIRE, VentureAction.UP_LEFT_FIRE], dtype=jnp.int32)
+_DOWN_ACTIONS = jnp.array([VentureAction.DOWN, VentureAction.DOWN_RIGHT, VentureAction.DOWN_LEFT, VentureAction.DOWN_FIRE, VentureAction.DOWN_RIGHT_FIRE, VentureAction.DOWN_LEFT_FIRE], dtype=jnp.int32)
+_LEFT_ACTIONS = jnp.array([VentureAction.LEFT, VentureAction.UP_LEFT, VentureAction.DOWN_LEFT, VentureAction.LEFT_FIRE, VentureAction.UP_LEFT_FIRE, VentureAction.DOWN_LEFT_FIRE], dtype=jnp.int32)
+_RIGHT_ACTIONS = jnp.array([VentureAction.RIGHT, VentureAction.UP_RIGHT, VentureAction.DOWN_RIGHT, VentureAction.RIGHT_FIRE, VentureAction.UP_RIGHT_FIRE, VentureAction.DOWN_RIGHT_FIRE], dtype=jnp.int32)
 
 
 def _create_wall_map_from_sprite(sprite_path: str) -> chex.Array:
@@ -221,7 +219,7 @@ for world_list in _JAX_TRANSITIONS_PER_WORLD_LIST:
     if any(world_list):
         max_portals_per_level = max(max_portals_per_level, max(len(p) for p in world_list if p))
 
-# Pad all level portal lists to ensure uniform size, crucial for JAX JIT compilation.
+# Pad all level portal lists to ensure uniform size.
 final_jax_transitions_list = []
 for world_list in _JAX_TRANSITIONS_PER_WORLD_LIST:
     padded_world_list = []
@@ -240,22 +238,22 @@ _JAX_TRANSITIONS = jnp.array(final_jax_transitions_list, dtype=jnp.float32)
 # Global level indices: 0-4 for World 1 (Main + 4 rooms), 5-9 for World 2 (Main + 4 rooms).
 _LEVEL_MONSTER_CONFIGS = (
     # World 1
-    {"num": 6, "spawns": jnp.array([[10, 36], [60, 77], [54, 127], [110, 74], [10, 126], [150, 127]]), "is_immortal": jnp.array([False]*6)},  # Level 0 (World 1 Main Map)
-    {"num": 0, "spawns": jnp.empty((0, 2), dtype=jnp.float32), "is_immortal": jnp.empty((0,), dtype=jnp.bool_)},  # Level 1 (World 1 Room 1)
-    {"num": 3, "spawns": jnp.array([[70.0, 50.0], [120.0, 120.0], [130.0, 130.0]]), "is_immortal": jnp.array([False]*3)},  # Level 2 (World 1 Room 2)
-    {"num": 3, "spawns": jnp.array([[40.0, 80.0], [50.0, 140.0], [100.0, 150.0]]), "is_immortal": jnp.array([False]*3)},  # Level 3 (World 1 Room 3)
-    {"num": 3, "spawns": jnp.array([[90.0, 40.0], [50.0, 150.0], [120.0, 90.0]]), "is_immortal": jnp.array([False]*3)},  # Level 4 (World 1 Room 4)
+    {"num": 6, "spawns": jnp.array([[10, 36], [60, 77], [54, 127], [110, 74], [10, 126], [150, 127]], dtype=jnp.float32), "is_immortal": jnp.array([False]*6)},
+    {"num": 0, "spawns": jnp.empty((0, 2), dtype=jnp.float32), "is_immortal": jnp.empty((0,), dtype=jnp.bool_)},
+    {"num": 3, "spawns": jnp.array([[70.0, 50.0], [120.0, 120.0], [130.0, 130.0]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
+    {"num": 3, "spawns": jnp.array([[40.0, 80.0], [50.0, 140.0], [100.0, 150.0]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
+    {"num": 3, "spawns": jnp.array([[90.0, 40.0], [50.0, 150.0], [120.0, 90.0]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
     # World 2
-    {"num": 6, "spawns": jnp.array([[70, 47], [10, 76], [7, 117], [130, 67], [120, 116], [124, 167]]), "is_immortal": jnp.array([False]*6)},  # Level 5 (World 2 Main Map)
-    {"num": 3, "spawns": jnp.array([[72, 85], [115, 37], [41, 35]]), "is_immortal": jnp.array([False]*3)},  # Level 6 (World 2 Room 1)
-    {"num": 3, "spawns": jnp.array([[73, 38], [123.0, 59.0], [93.0, 109.0]]), "is_immortal": jnp.array([False]*3)},  # Level 7 (World 2 Room 2)
-    {"num": 3, "spawns": jnp.array([[61.0, 109.0], [74, 65], [101, 118]]), "is_immortal": jnp.array([False]*3)},  # Level 8 (World 2 Room 3)
-    {"num": 3, "spawns": jnp.array([[42, 82], [112, 83], [72, 103]]), "is_immortal": jnp.array([False]*3)},  # Level 9 (World 2 Room 4)
+    {"num": 6, "spawns": jnp.array([[70, 47], [10, 76], [7, 117], [130, 67], [120, 116], [124, 167]], dtype=jnp.float32), "is_immortal": jnp.array([False]*6)},
+    {"num": 3, "spawns": jnp.array([[72, 85], [115, 37], [41, 35]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
+    {"num": 3, "spawns": jnp.array([[73, 38], [123.0, 59.0], [93.0, 109.0]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
+    {"num": 3, "spawns": jnp.array([[61.0, 109.0], [74, 65], [101, 118]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
+    {"num": 3, "spawns": jnp.array([[42, 82], [112, 83], [72, 103]], dtype=jnp.float32), "is_immortal": jnp.array([False]*3)},
 )
 
 # Pre-calculate total monsters and offsets for efficient indexing.
 _TOTAL_MONSTERS = sum(config["num"] for config in _LEVEL_MONSTER_CONFIGS)
-_LEVEL_OFFSETS = jnp.cumsum(jnp.array([0] + [c["num"] for c in _LEVEL_MONSTER_CONFIGS]))
+_LEVEL_OFFSETS = jnp.cumsum(jnp.array([0] + [c["num"] for c in _LEVEL_MONSTER_CONFIGS], dtype=jnp.int32))
 _ALL_MONSTER_SPAWNS = jnp.concatenate([c["spawns"] for c in _LEVEL_MONSTER_CONFIGS]).astype(jnp.float32)
 _ALL_MONSTER_IMMORTAL_FLAGS = jnp.concatenate([c["is_immortal"] for c in _LEVEL_MONSTER_CONFIGS])
 
@@ -309,7 +307,7 @@ class VentureConstants(NamedTuple):
     """Defines all static constants for the Venture game."""
     SCREEN_WIDTH: int = 160
     SCREEN_HEIGHT: int = 210
-    PLAYER_SPEED: float = jnp.array(0.4, dtype=jnp.float32)
+    PLAYER_SPEED: float = jnp.array(1, dtype=jnp.float32)
     PLAYER_DOT_RENDER_WIDTH: int = 1
     PLAYER_DOT_RENDER_HEIGHT: int = 2
     PLAYER_DETAILED_RENDER_WIDTH: int = 6  # Player sprite dimensions when in rooms.
@@ -319,18 +317,18 @@ class VentureConstants(NamedTuple):
     ALL_WALL_MAPS_PER_WORLD: chex.Array = ALL_WALL_MAPS_PER_WORLD  # Multi-world wall maps.
     PLAY_AREA_Y_START: int = 20  # Top boundary of the playable area.
     PLAY_AREA_Y_END: int = 180  # Bottom boundary of the playable area.
-    MONSTER_SPEED: float = 0.4
+    MONSTER_SPEED: float = 0
     MONSTER_RENDER_WIDTH: int = 7
     MONSTER_RENDER_HEIGHT: int = 10
     MONSTER_CHANGE_DIR_PROB: float = 0.01  # Probability of a monster changing direction each frame.
-    MAX_DEAD_MONSTERS: int = 10  # Maximum number of dead monsters (corpses) to track.
-    DEAD_MONSTER_LIFETIME_FRAMES: int = 90  # Frames a dead monster remains on screen (e.g., 3 seconds @ 30 FPS).
+    MAX_DEAD_MONSTERS: int = 10  # Maximum number of dead monsters to track.
+    DEAD_MONSTER_LIFETIME_FRAMES: int = 90  # Frames a dead monster remains on screen (1.5 sec.).
 
     LIVES: int = 4
     PLAYER_INITIAL_X: float = 45.0
     PLAYER_INITIAL_Y: float = 185.0
     FINAL_GAME_OVER_DELAY_FRAMES: chex.Array = jnp.array(60, dtype=jnp.int32)  # Delay before fully ending the game.
-    LIFE_LOST_DELAY_FRAMES: chex.Array = jnp.array(45, dtype=jnp.int32)  # Delay after losing a life (e.g., 1.5 seconds @ 30fps).
+    LIFE_LOST_DELAY_FRAMES: chex.Array = jnp.array(45, dtype=jnp.int32)  # Delay after losing a life (0.75 sec. @ 60fps).
 
     WORLD_TRANSITION_DELAY_FRAMES: chex.Array = jnp.array(90, dtype=jnp.int32)  # Pause duration when transitioning between worlds.
 
@@ -418,7 +416,6 @@ class GameState(NamedTuple):
     world_transition_timer: chex.Array  # Countdown timer for world transition.
     last_level: chex.Array  # Tracks the previous level to detect transitions.
     collected_chest_in_current_visit: chex.Array # Records if a chest was collected in the current room visit.
-    latest_reward: chex.Array
 
 
 class EntityPosition(NamedTuple):
@@ -449,7 +446,9 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
 
     def __init__(self, consts: VentureConstants = None):
         super().__init__(consts or VentureConstants())
+
         self.internal_renderer = VentureRenderer(self.consts)
+
 
     def reset(self, key: jax.random.PRNGKey = None) -> tuple[VentureObservation, GameState]:
         """Resets the environment to its initial state for a new episode."""
@@ -467,7 +466,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         projectile_state = ProjectileState(
             x=jnp.array(0.0, dtype=jnp.float32), y=jnp.array(0.0, dtype=jnp.float32),
             dx=jnp.array(0.0, dtype=jnp.float32), dy=jnp.array(0.0, dtype=jnp.float32),
-            active=jnp.array(False),
+            active=jnp.array(False, dtype=jnp.bool_),
             lifetime=jnp.array(0, dtype=jnp.int32)
         )
 
@@ -509,23 +508,22 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             dead_monsters=dead_monster_state,
             projectile=projectile_state,
             chaser=chaser_state,
-            chests_active=jnp.ones(num_rooms, dtype=jnp.bool_),  # All chests are initially active.
+            chests_active=jnp.ones(num_rooms, dtype=jnp.bool_),
             lasers=laser_state,
             kill_bonus_active=jnp.zeros(num_rooms, dtype=jnp.bool_),
             key=key,
-            game_over_timer=jnp.array(0, dtype=jnp.int32),  # Change this to int32
-            life_lost_timer=jnp.array(0, dtype=jnp.int32),  # Change this to int32
-            level_timer=jnp.array(0, dtype=jnp.int32),  # Change this to int32
-            step_counter=jnp.array(0, dtype=jnp.int32),  # Change this to int32
-            score=jnp.array(0, dtype=jnp.int32),  # Change this to int32
-            lives=jnp.array(self.consts.LIVES, dtype=jnp.int32),  # Change this to int32
-            is_in_collision=jnp.array(False),
-            current_level=jnp.array(0, dtype=jnp.int32),  # Change this to int32
-            world_level=jnp.array(1, dtype=jnp.int32),  # Change this to int32
+            game_over_timer=jnp.array(0, dtype=jnp.int32),
+            life_lost_timer=jnp.array(0, dtype=jnp.int32),
+            level_timer=jnp.array(0, dtype=jnp.int32),
+            step_counter=jnp.array(0, dtype=jnp.int32),
+            score=jnp.array(0, dtype=jnp.int32),
+            lives=jnp.array(self.consts.LIVES, dtype=jnp.int32),
+            is_in_collision=jnp.array(False, dtype=jnp.bool_),
+            current_level=jnp.array(0, dtype=jnp.int32),
+            world_level=jnp.array(1, dtype=jnp.int32),
             world_transition_timer=jnp.array(0, dtype=jnp.int32),
             last_level=jnp.array(0, dtype=jnp.int32),
             collected_chest_in_current_visit=jnp.array(-1, dtype=jnp.int32),
-            latest_reward=jnp.array(0.0, dtype=jnp.float32)
         )
 
         return self._get_observation(state), state
@@ -534,6 +532,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
     def step(self, state: GameState, action: int) -> tuple[
         VentureObservation, Any, Array | ndarray[Any, dtype[Any]], bool, VentureInfo]:
         """Performs one step of the environment given the agent's actions."""
+
         # Store the current level before any transitions occur.
         state = state._replace(last_level=state.current_level)
 
@@ -885,10 +884,9 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             state
         )
         reward = (new_state.score - previous_score).astype(jnp.float32)
-        new_state = new_state._replace(latest_reward=reward)
 
         done = self._get_done(new_state)
-        info = self._get_info(new_state)
+        info = self._get_info(new_state, all_rewards=jnp.array([reward]))
         obs = self._get_observation(new_state)
 
         return obs, new_state, reward, done, info
@@ -1441,20 +1439,20 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         is_in_room = state.current_level != 0
 
         player_width = jax.lax.cond(is_in_room,
-                                    lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_WIDTH, dtype=jnp.int32),
-                                    lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_WIDTH, dtype=jnp.int32))
+                                    lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_WIDTH, dtype=jnp.float32),
+                                    lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_WIDTH, dtype=jnp.float32))
 
         player_height = jax.lax.cond(is_in_room,
-                                     lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_HEIGHT, dtype=jnp.int32),
-                                     lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_HEIGHT, dtype=jnp.int32))
+                                     lambda: jnp.array(self.consts.PLAYER_DETAILED_RENDER_HEIGHT, dtype=jnp.float32),
+                                     lambda: jnp.array(self.consts.PLAYER_DOT_RENDER_HEIGHT, dtype=jnp.float32))
 
         player = EntityPosition(x=state.player.x, y=state.player.y,
                                 width=player_width,
                                 height=player_height)
 
         monsters = EntityPosition(x=state.monsters.x, y=state.monsters.y,
-                                  width=jnp.array(self.consts.MONSTER_RENDER_WIDTH, dtype=jnp.int32),
-                                  height=jnp.array(self.consts.MONSTER_RENDER_HEIGHT, dtype=jnp.int32))
+                                  width=jnp.array(self.consts.MONSTER_RENDER_WIDTH, dtype=jnp.float32),
+                                  height=jnp.array(self.consts.MONSTER_RENDER_HEIGHT, dtype=jnp.float32))
 
         game_over_flag = state.game_over_timer > 0
 
@@ -1468,9 +1466,9 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         """Determines if the episode has ended."""
         return state.game_over_timer == 1
 
-    def _get_info(self, state: GameState) -> VentureInfo:
+    def _get_info(self, state: GameState, all_rewards: jnp.array = None) -> VentureInfo:
         """Provides auxiliary information about the game state."""
-        return VentureInfo(time=state.step_counter, score=state.score, lives=state.lives, all_rewards=jnp.array([state.latest_reward]))
+        return VentureInfo(time=state.step_counter, score=state.score, lives=state.lives, all_rewards=all_rewards if all_rewards is not None else jnp.array([0.0]))
 
     def action_space(self) -> spaces.Discrete:
         """Returns the action space of the environment."""
@@ -1481,21 +1479,21 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
         player_space = spaces.Dict({
             "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.float32),
             "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.float32),
-            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int32),
-            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int32),
+            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.float32),
+            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.float32),
         })
         monster_space = spaces.Dict({
             "x": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(self.consts.TOTAL_MONSTERS,),
                             dtype=jnp.float32),
             "y": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(self.consts.TOTAL_MONSTERS,),
                             dtype=jnp.float32),
-            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.int32),
-            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.int32),
+            "width": spaces.Box(low=0, high=self.consts.SCREEN_WIDTH, shape=(), dtype=jnp.float32),
+            "height": spaces.Box(low=0, high=self.consts.SCREEN_HEIGHT, shape=(), dtype=jnp.float32),
         })
         return spaces.Dict({
             "player": player_space,
             "monsters": monster_space,
-            "game_over": spaces.Box(low=0, high=1, shape=(), dtype=jnp.int32),
+            "game_over": spaces.Box(low=0, high=1, shape=(), dtype=jnp.float32),
         })
 
     def image_space(self) -> spaces.Box:
@@ -1548,7 +1546,7 @@ class VentureRenderer(JAXGameRenderer):
             sprites_set: Dict[str, Any] = {}
             bg_target_shape = (self.consts.SCREEN_HEIGHT, self.consts.SCREEN_WIDTH, 4)
 
-            # Backgrounds (main map and rooms).
+            # main map and rooms.
             main_map_path = os.path.join(self.sprite_path, f'map{w_suffix}.npy')
             bg_list = [
                 jax.image.resize(jr.loadFrame(main_map_path), bg_target_shape, method='nearest').astype(jnp.uint8)]
@@ -1775,7 +1773,7 @@ class VentureRenderer(JAXGameRenderer):
 
         canvas = render_monsters_fn(canvas)
 
-        # Draw dead monsters (corpses).
+        # Draw dead monsters.
         def render_dead_monsters_fn(c):
             total_levels_per_world = 5
             global_level_for_offsets = (state.world_level - 1) * total_levels_per_world + state.current_level
@@ -1786,7 +1784,7 @@ class VentureRenderer(JAXGameRenderer):
 
             def _render_dead_monsters(canvas):
                 dead_monster_sprite_branches = [
-                    lambda: jr.get_sprite_frame(self.sprites['monster_dead_2'][world_idx], 0), # Fallback for main map
+                    lambda: jr.get_sprite_frame(self.sprites['monster_dead_2'][world_idx], 0),
                     lambda: jr.get_sprite_frame(self.sprites['monster_dead_1'][world_idx], 0),
                     lambda: jr.get_sprite_frame(self.sprites['monster_dead_2'][world_idx], 0),
                     lambda: jr.get_sprite_frame(self.sprites['monster_dead_3'][world_idx], 0),

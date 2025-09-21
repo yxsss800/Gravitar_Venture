@@ -1671,16 +1671,12 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
     # -- UFO: was alive last frame and is now dead (and has an explosion timer) --
     ufo_just_died = (state_after_ufo.ufo.alive == jnp.array(False, dtype=jnp.bool_)) & (env_state.ufo.alive == jnp.array(True, dtype=jnp.bool_)) & (state_after_ufo.ufo.death_timer > jnp.int32(0))
     score_from_ufo = jnp.where(ufo_just_died, jnp.float32(100.0), jnp.float32(0.0))
+
+    reward_saucer_kill = jnp.float32(0.0)
+    reward_penalty = jnp.float32(0.0)
+
     score_delta = score_from_enemies + score_from_reactor + score_from_ufo + score_from_tanks
 
-    all_rewards = {
-        "enemies": score_from_enemies,
-        "reactor": score_from_reactor,
-        "ufo": score_from_ufo,
-        "tanks": score_from_tanks,
-        "saucer_kill": jnp.float32(0.0),  
-        "penalty": jnp.float32(0.0), 
-    }
     # d) Crash and respawn logic
     was_crashing = state_after_ufo.crash_timer > jnp.int32(0)
     start_crash = dead & (~was_crashing)
@@ -1763,12 +1759,12 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
         "hit_by_bullet": hit_by_enemy_bullet | hit_by_ufo_bullet,
         "reactor_crash_exit": reset_from_reactor_crash,
         # Flattened rewards
-        "reward_enemies": all_rewards["enemies"],
-        "reward_reactor": all_rewards["reactor"],
-        "reward_ufo": all_rewards["ufo"],
-        "reward_tanks": all_rewards["tanks"],
-        "reward_saucer_kill": all_rewards["saucer_kill"],
-        "reward_penalty": all_rewards["penalty"],
+        "reward_enemies": score_from_enemies,
+        "reward_reactor": score_from_reactor,
+        "reward_ufo": score_from_ufo,
+        "reward_tanks": score_from_tanks,
+        "reward_saucer_kill": reward_saucer_kill, 
+        "reward_penalty": reward_penalty,     
     }
 
     return obs, final_env_state, jnp.float32(reward), game_over, info, reset, jnp.int32(-1)

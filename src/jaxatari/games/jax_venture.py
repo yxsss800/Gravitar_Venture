@@ -884,7 +884,7 @@ class JaxVenture(JaxEnvironment[GameState, VentureObservation, VentureInfo, Vent
             ),
             state
         )
-        reward = (new_state.score - previous_score).astype(jnp.int32)
+        reward = (new_state.score - previous_score).astype(jnp.float32)
         new_state = new_state._replace(latest_reward=reward)
 
         done = self._get_done(new_state)

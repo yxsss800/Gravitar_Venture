@@ -1432,12 +1432,14 @@ def step_map(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, EnvState, j
         "hit_by_bullet": hit_ship_by_bullet,
         "reactor_crash_exit": jnp.array(False, dtype=jnp.bool_),
         # Flattened rewards
-        "reward_enemies": jnp.float32(0.0),    
-        "reward_reactor": jnp.float32(0.0),   
-        "reward_ufo": jnp.float32(0.0),        
-        "reward_tanks": jnp.float32(0.0),      
-        "reward_saucer_kill": reward_saucer,
-        "reward_penalty": reward_penalty,
+        "all_rewards": {
+            "reward_enemies": jnp.float32(0.0),
+            "reward_reactor": jnp.float32(0.0),
+            "reward_ufo": jnp.float32(0.0),
+            "reward_tanks": jnp.float32(0.0),
+            "reward_saucer_kill": reward_saucer,
+            "reward_penalty": reward_penalty,
+        }
     }
     
     new_env = new_env._replace(score=new_env.score + reward) 
@@ -1763,12 +1765,14 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
         "hit_by_bullet": hit_by_enemy_bullet | hit_by_ufo_bullet,
         "reactor_crash_exit": reset_from_reactor_crash,
         # Flattened rewards
-        "reward_enemies": all_rewards["enemies"],
-        "reward_reactor": all_rewards["reactor"],
-        "reward_ufo": all_rewards["ufo"],
-        "reward_tanks": all_rewards["tanks"],
-        "reward_saucer_kill": all_rewards["saucer_kill"],
-        "reward_penalty": all_rewards["penalty"],
+        "all_rewards": {
+            "reward_enemies": all_rewards["enemies"],
+            "reward_reactor": all_rewards["reactor"],
+            "reward_ufo": all_rewards["ufo"],
+            "reward_tanks": all_rewards["tanks"],
+            "reward_saucer_kill": all_rewards["saucer_kill"],
+            "reward_penalty": all_rewards["penalty"],
+        }
     }
 
     return obs, final_env_state, jnp.float32(reward), game_over, info, reset, jnp.int32(-1)
@@ -1856,12 +1860,14 @@ def step_arena(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, EnvState,
         "hit_by_bullet": hit_ship_by_bullet,
         "reactor_crash_exit": jnp.array(False, dtype=jnp.bool_),
         # Flattened rewards
-        "reward_enemies": jnp.float32(0.0),   
-        "reward_reactor": jnp.float32(0.0),   
-        "reward_ufo": jnp.float32(0.0),         
-        "reward_tanks": jnp.float32(0.0),     
-        "reward_saucer_kill": reward_saucer_kill,
-        "reward_penalty": jnp.float32(0.0),      
+        "all_rewards": {
+            "reward_enemies": jnp.float32(0.0),
+            "reward_reactor": jnp.float32(0.0),
+            "reward_ufo": jnp.float32(0.0),
+            "reward_tanks": jnp.float32(0.0),
+            "reward_saucer_kill": reward_saucer_kill,
+            "reward_penalty": jnp.float32(0.0),
+        }     
     }
 
     final_env_state = env_state._replace(
@@ -2040,12 +2046,14 @@ def step_core(env_state: EnvState, action: int):
                 "reactor_crash_exit": jnp.array(False, dtype=jnp.bool_),
                 
                 # Flattened rewards
-                "reward_enemies": jnp.float32(0.0),
-                "reward_reactor": jnp.float32(0.0),
-                "reward_ufo": jnp.float32(0.0),
-                "reward_tanks": jnp.float32(0.0),
-                "reward_saucer_kill": jnp.float32(0.0),
-                "reward_penalty": jnp.float32(0.0),
+                "all_rewards": {
+                    "reward_enemies": jnp.float32(0.0),
+                    "reward_reactor": jnp.float32(0.0),
+                    "reward_ufo": jnp.float32(0.0),
+                    "reward_tanks": jnp.float32(0.0),
+                    "reward_saucer_kill": jnp.float32(0.0),
+                    "reward_penalty": jnp.float32(0.0),
+                }
             }
         
         # 2. Return a tuple with the same pytree structure as the other branch.
@@ -2100,17 +2108,20 @@ def step_full(env_state: EnvState, action: int, env_instance: 'JaxGravitar'):
                 )
 
                 next_state = next_state._replace(key=new_main_key)
+                all_rewards_info = info.get("all_rewards", {})
                 enter_info = {
                     "level_cleared": jnp.array(False, dtype=jnp.bool_),
                     "crash": info.get("crash", jnp.array(False, dtype=jnp.bool_)),
                     "hit_by_bullet": info.get("hit_by_bullet", jnp.array(False, dtype=jnp.bool_)),
                     "reactor_crash_exit": info.get("reactor_crash_exit", jnp.array(False, dtype=jnp.bool_)),
-                    "reward_enemies": info.get("reward_enemies", jnp.float32(0.0)),
-                    "reward_reactor": info.get("reward_reactor", jnp.float32(0.0)),
-                    "reward_ufo": info.get("reward_ufo", jnp.float32(0.0)),
-                    "reward_tanks": info.get("reward_tanks", jnp.float32(0.0)),
-                    "reward_saucer_kill": info.get("reward_saucer_kill", jnp.float32(0.0)),
-                    "reward_penalty": info.get("reward_penalty", jnp.float32(0.0)),
+                    "all_rewards": {
+                        "reward_enemies": all_rewards_info.get("reward_enemies", jnp.float32(0.0)),
+                        "reward_reactor": all_rewards_info.get("reward_reactor", jnp.float32(0.0)),
+                        "reward_ufo": all_rewards_info.get("reward_ufo", jnp.float32(0.0)),
+                        "reward_tanks": all_rewards_info.get("reward_tanks", jnp.float32(0.0)),
+                        "reward_saucer_kill": all_rewards_info.get("reward_saucer_kill", jnp.float32(0.0)),
+                        "reward_penalty": all_rewards_info.get("reward_penalty", jnp.float32(0.0)),
+                    }
                 }
 
                 # Return the new state after entering the level. `done` is False.
@@ -2132,17 +2143,20 @@ def step_full(env_state: EnvState, action: int, env_instance: 'JaxGravitar'):
                         planets_cleared_mask=current_state.planets_cleared_mask
                     )
                     map_state = map_state._replace(key=new_main_key)
+                    all_rewards_info = info.get("all_rewards", {})
                     win_info = {
                         "level_cleared": jnp.array(True, dtype=jnp.bool_),
                         "crash": info.get("crash", jnp.array(False, dtype=jnp.bool_)),
                         "hit_by_bullet": info.get("hit_by_bullet", jnp.array(False, dtype=jnp.bool_)),
                         "reactor_crash_exit": info.get("reactor_crash_exit", jnp.array(False, dtype=jnp.bool_)),
-                        "reward_enemies": info.get("reward_enemies", jnp.float32(0.0)),
-                        "reward_reactor": info.get("reward_reactor", jnp.float32(0.0)),
-                        "reward_ufo": info.get("reward_ufo", jnp.float32(0.0)),
-                        "reward_tanks": info.get("reward_tanks", jnp.float32(0.0)),
-                        "reward_saucer_kill": info.get("reward_saucer_kill", jnp.float32(0.0)),
-                        "reward_penalty": info.get("reward_penalty", jnp.float32(0.0)),
+                        "all_rewards": {
+                            "reward_enemies": all_rewards_info.get("reward_enemies", jnp.float32(0.0)),
+                            "reward_reactor": all_rewards_info.get("reward_reactor", jnp.float32(0.0)),
+                            "reward_ufo": all_rewards_info.get("reward_ufo", jnp.float32(0.0)),
+                            "reward_tanks": all_rewards_info.get("reward_tanks", jnp.float32(0.0)),
+                            "reward_saucer_kill": all_rewards_info.get("reward_saucer_kill", jnp.float32(0.0)),
+                            "reward_penalty": all_rewards_info.get("reward_penalty", jnp.float32(0.0)),
+                        }
                     }
                     return obs_reset, map_state, jnp.float32(reward), jnp.array(False, dtype=jnp.bool_), win_info, jnp.array(True, dtype=jnp.bool_), level
 
@@ -2150,17 +2164,20 @@ def step_full(env_state: EnvState, action: int, env_instance: 'JaxGravitar'):
                     """Logic for when the player dies. This is now simple and clean."""
                     # 1. Calculate the correct number of lives AFTER this death event.
                     lives_after_death = current_state.lives - jnp.int32(1)
+                    all_rewards_info = info.get("all_rewards", {})
                     death_info = {
                         "level_cleared": jnp.array(False, dtype=jnp.bool_),
                         "crash": info.get("crash", jnp.array(False, dtype=jnp.bool_)),
                         "hit_by_bullet": info.get("hit_by_bullet", jnp.array(False, dtype=jnp.bool_)),
                         "reactor_crash_exit": info.get("reactor_crash_exit", jnp.array(False, dtype=jnp.bool_)),
-                        "reward_enemies": info.get("reward_enemies", jnp.float32(0.0)),
-                        "reward_reactor": info.get("reward_reactor", jnp.float32(0.0)),
-                        "reward_ufo": info.get("reward_ufo", jnp.float32(0.0)),
-                        "reward_tanks": info.get("reward_tanks", jnp.float32(0.0)),
-                        "reward_saucer_kill": info.get("reward_saucer_kill", jnp.float32(0.0)),
-                        "reward_penalty": info.get("reward_penalty", jnp.float32(0.0)),
+                        "all_rewards": {
+                            "reward_enemies": all_rewards_info.get("reward_enemies", jnp.float32(0.0)),
+                            "reward_reactor": all_rewards_info.get("reward_reactor", jnp.float32(0.0)),
+                            "reward_ufo": all_rewards_info.get("reward_ufo", jnp.float32(0.0)),
+                            "reward_tanks": all_rewards_info.get("reward_tanks", jnp.float32(0.0)),
+                            "reward_saucer_kill": all_rewards_info.get("reward_saucer_kill", jnp.float32(0.0)),
+                            "reward_penalty": all_rewards_info.get("reward_penalty", jnp.float32(0.0)),
+                            }
                     }
                     
                     # 2. Determine if the game is over based on the new life count.
@@ -2197,17 +2214,20 @@ def step_full(env_state: EnvState, action: int, env_instance: 'JaxGravitar'):
             obs, new_env_state, reward, done, info, reset, level = operands
 
             # Ensure the info dict has a consistent structure.
+            all_rewards_info = info.get("all_rewards", {})
             no_reset_info = {
                 "level_cleared": jnp.array(False, dtype=jnp.bool_),
                 "crash": info.get("crash", jnp.array(False, dtype=jnp.bool_)),
                 "hit_by_bullet": info.get("hit_by_bullet", jnp.array(False, dtype=jnp.bool_)),
                 "reactor_crash_exit": info.get("reactor_crash_exit", jnp.array(False, dtype=jnp.bool_)),
-                "reward_enemies": info.get("reward_enemies", jnp.float32(0.0)),
-                "reward_reactor": info.get("reward_reactor", jnp.float32(0.0)),
-                "reward_ufo": info.get("reward_ufo", jnp.float32(0.0)),
-                "reward_tanks": info.get("reward_tanks", jnp.float32(0.0)),
-                "reward_saucer_kill": info.get("reward_saucer_kill", jnp.float32(0.0)),
-                "reward_penalty": info.get("reward_penalty", jnp.float32(0.0)),
+                "all_rewards": {
+                    "reward_enemies": all_rewards_info.get("reward_enemies", jnp.float32(0.0)),
+                    "reward_reactor": all_rewards_info.get("reward_reactor", jnp.float32(0.0)),
+                    "reward_ufo": all_rewards_info.get("reward_ufo", jnp.float32(0.0)),
+                    "reward_tanks": all_rewards_info.get("reward_tanks", jnp.float32(0.0)),
+                    "reward_saucer_kill": all_rewards_info.get("reward_saucer_kill", jnp.float32(0.0)),
+                    "reward_penalty": all_rewards_info.get("reward_penalty", jnp.float32(0.0)),
+                }
             }
 
             return obs, new_env_state, jnp.float32(reward), done, no_reset_info, reset, level
@@ -2275,8 +2295,9 @@ def get_action_from_key():
 
 
 class JaxGravitar(JaxEnvironment):
-    def __init__(self):
+    def __init__(self, obs_type="vector"):
         super().__init__()
+        self.obs_type = obs_type 
         self.obs_shape = (5,)
         self.num_actions = 18
 
@@ -2369,23 +2390,26 @@ class JaxGravitar(JaxEnvironment):
     # === Core Fix 1: Implement all required abstract methods ===
     def reset(self, key: jnp.ndarray) -> Tuple[jnp.ndarray, EnvState]:
         """Implements the main reset entry point of the environment."""
+        # --- FIX: Always return the base vector observation from the core reset function ---
         return self.reset_map(key)
 
     def step(self, env_state: EnvState, action: int):
         """Implements the main step entry point of the environment."""
+        # --- FIX: Always return the base vector observation from the core step function ---
         obs, ns, reward, done, info, _reset, _level = step_full(env_state, action, self)
-        # Convert JAX types to standard Python types for compatibility
         reward = reward.astype(jnp.float32) 
-
         return obs, ns, reward, done, info
 
     def action_space(self) -> spaces.Discrete:
         return spaces.Discrete(self.num_actions)
 
-    def observation_space(self) -> spaces.Box:
-        low = jnp.array([0.0, 0.0, -10.0, -10.0, -jnp.pi], dtype=jnp.float32)
-        high = jnp.array([float(WINDOW_WIDTH), float(WINDOW_HEIGHT), 10.0, 10.0, jnp.pi], dtype=jnp.float32)
-        return spaces.Box(low=low, high=high, shape=self.obs_shape, dtype=jnp.float32)
+    def observation_space(self) -> spaces.Space:
+        if self.obs_type == "object_centric":
+            return self.object_centric_observation_space()
+        else: # "vector"
+            low = jnp.array([0.0, 0.0, -10.0, -10.0, -jnp.pi], dtype=jnp.float32)
+            high = jnp.array([float(WINDOW_WIDTH), float(WINDOW_HEIGHT), 10.0, 10.0, jnp.pi], dtype=jnp.float32)
+            return spaces.Box(low=low, high=high, shape=self.obs_shape, dtype=jnp.float32)
 
     def image_space(self) -> spaces.Box:
         return spaces.Box(low=0, high=255, shape=(WINDOW_HEIGHT, WINDOW_WIDTH, 3), dtype=jnp.uint8)

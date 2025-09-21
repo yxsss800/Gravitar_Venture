@@ -1483,7 +1483,14 @@ def _step_level_core(env_state: EnvState, action: int):
     state_after_spawn = jax.lax.cond(can_spawn_ufo, _spawn_ufo_once, lambda e: e, env_state)
     
     # --- 2. State Update (Movement & Player Firing) ---
-    ship_after_move = ship_step(state_after_spawn.state, action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
+    was_crashing = state_after_spawn.crash_timer > 0
+    ship_state_before_move = state_after_spawn.state._replace(
+        vx=jnp.where(was_crashing, 0.0, state_after_spawn.state.vx),
+        vy=jnp.where(was_crashing, 0.0, state_after_spawn.state.vy)
+    )
+    actual_action = jnp.where(was_crashing, NOOP, action)
+
+    ship_after_move = ship_step(ship_state_before_move, actual_action, (WINDOW_WIDTH, WINDOW_HEIGHT), HUD_HEIGHT)
     can_fire_player = jnp.isin(action, jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])) & (state_after_spawn.cooldown == 0) & (_bullets_alive_count(state_after_spawn.bullets) < 2)
     
     bullets = jax.lax.cond(
@@ -1676,21 +1683,25 @@ def _step_level_core(env_state: EnvState, action: int):
     was_crashing = state_after_ufo.crash_timer > 0
     start_crash = dead & (~was_crashing)
     crash_timer_next = jnp.where(start_crash, 30, jnp.maximum(state_after_ufo.crash_timer - 1, 0))
+    crash_animation_finished = (state_after_ufo.crash_timer == 1)
     
     # No in-level respawn in the Reactor
-    respawn_now = (state_after_ufo.crash_timer == 1) & (~is_in_reactor) 
-    lives_next = state_after_ufo.lives - jnp.where(respawn_now, 1, 0)
-    
+    respawn_now = crash_animation_finished & (~is_in_reactor)
+    reset_from_reactor_crash = crash_animation_finished & is_in_reactor
+    death_event = respawn_now | reset_from_reactor_crash
+
+    lives_next = state_after_ufo.lives - jnp.where(death_event, 1, 0)
+
     # e) The final Reset signal
     all_enemies_gone = jnp.all(enemies.w == 0) & (~ufo.alive) & (ufo.death_timer == 0)
     has_meaningful_enemies = jnp.any(state_after_ufo.enemies.w > 0)
     reset_level_win = all_enemies_gone & has_meaningful_enemies & (~is_in_reactor)
 
     # Total Reset signal = Normal win OR Reactor win OR (Reactor crash AND animation finished)
-    reset = reset_level_win | win_reactor
+    reset = reset_level_win | win_reactor | reset_from_reactor_crash
 
     # f) Is the game over?
-    game_over = respawn_now & (lives_next <= 0)
+    game_over = death_event & (lives_next <= 0)
 
     # --- 8. Respawn State Transition ---
     def _respawn_level_state(operands):
@@ -1751,267 +1762,11 @@ def _step_level_core(env_state: EnvState, action: int):
         "reactor_crash_exit": reset_from_reactor_crash,
         "all_rewards": all_rewards,  
     }
-                  
 
     return obs, final_env_state, reward, game_over, info, reset, jnp.int32(-1)
 
 # Note: For radius, the same value is passed to each call.
 batched_terrain_hit = jax.vmap(terrain_hit, in_axes=(None, 0, 0, None))
-
-@jax.jit
-def step_core_level(env_state: EnvState,
-                    state_in: ShipState,
-                    action: int,
-                    bullets: Bullets,
-                    cooldown: int,
-                    enemies: Enemies,
-                    enemy_bullets: Bullets,
-                    fire_cooldown: jnp.ndarray,
-                    key: jax.random.PRNGKey,
-                    terrain_mask: jnp.ndarray,
-                    window_size: Tuple[int, int],
-                    hud_height: int,
-                    cooldown_max: int,
-                    bullet_speed: float,
-                    enemy_bullet_speed: float,
-                    fire_interval: int) -> Tuple[
-    jnp.ndarray, ShipState, Bullets, int, Enemies, Bullets, jnp.ndarray, jax.random.PRNGKey, float, float, bool, bool, int]:
-    # Ship movement
-    state = ship_step(state_in, action, window_size, hud_height)
-
-    # Handle shooting
-    fire_actions = jnp.array([1, 10, 11, 12, 13, 14, 15, 16, 17])
-    is_firing = jnp.isin(action, fire_actions)
-
-    PLAYER_MAX_BULLETS = jnp.int32(2)
-    alive_cnt = _bullets_alive_count(bullets) 
-
-    bullets = jax.lax.cond(
-        is_firing & (cooldown == 0) & (alive_cnt < PLAYER_MAX_BULLETS),
-        lambda _: fire_bullet(bullets, state.x, state.y, state.angle, bullet_speed),
-        lambda _: bullets,
-        operand=None
-    )
-
-    bullets = update_bullets(bullets)
-    cooldown = jnp.where(is_firing & (cooldown == 0), cooldown_max, jnp.maximum(cooldown - 1, 0))
-
-
-    # Player bullet collision with terrain
-    player_bullet_radius = 0.4              # Adjustable bullet collision radius
-    # Only check for live bullets
-    bullets_to_check_mask = bullets.alive
-    # Use the batched collision detection function for the bullets' coordinates
-    hit_terrain_mask = batched_terrain_hit(env_state, bullets.x, bullets.y, player_bullet_radius)
-    # If a bullet is alive and has hit the terrain, it's no longer alive
-    new_player_bullets_alive = bullets.alive & ~hit_terrain_mask
-    bullets = bullets._replace(alive=new_player_bullets_alive)
-
-    # Enemy movement
-    enemies = enemy_step(enemies, window_width=window_size[0])
-    is_exploding = enemies.death_timer > 0
-
-    enemies = enemies._replace(
-        death_timer=jnp.maximum(enemies.death_timer - 1, 0),
-        # Width and height only become 0 after the timer expires
-        w=jnp.where(is_exploding & (enemies.death_timer == 1), 0.0, enemies.w),
-        h=jnp.where(is_exploding & (enemies.death_timer == 1), 0.0, enemies.h)
-    )
-
-    can_fire_globally = _bullets_alive_count(enemy_bullets) < 1 
-
-    def _do_fire(_):
-
-        return enemy_fire(enemies, state.x, state.y, enemy_bullet_speed, fire_cooldown, fire_interval, key)
-    
-    def _do_not_fire(_):
-        empty_bullets = Bullets(x=jnp.zeros_like(enemies.x), y=jnp.zeros_like(enemies.y), vx=jnp.zeros_like(enemies.vx), vy=jnp.zeros_like(enemies.vx), alive=jnp.zeros_like(enemies.w, dtype=bool))
-        new_cooldown = jnp.maximum(fire_cooldown - 1, 0)
-
-        return empty_bullets, new_cooldown, key
-    
-    new_enemy_bullets, fire_cooldown, key = jax.lax.cond(can_fire_globally, _do_fire, _do_not_fire, operand=None)
-    
-    # ========== Bullet Merging + Update (Static Length Control) ==========
-
-    def pad_bullets(b: Bullets, target_len=16):
-        def pad_array(arr, pad_val=0.0):
-            cur_len = arr.shape[0]
-            pad_len = max(target_len - cur_len, 0)
-            return jnp.pad(arr[:target_len], (0, pad_len), constant_values=pad_val)
-
-        return Bullets(
-            x=pad_array(b.x),
-            y=pad_array(b.y),
-            vx=pad_array(b.vx),
-            vy=pad_array(b.vy),
-            alive=pad_array(b.alive, pad_val=False)
-        )
-
-    def truncate_bullets(b: Bullets, max_len=16):
-        return Bullets(
-            x=b.x[:max_len],
-            y=b.y[:max_len],
-            vx=b.vx[:max_len],
-            vy=b.vy[:max_len],
-            alive=b.alive[:max_len]
-        )
-
-    new_enemy_bullets = pad_bullets(new_enemy_bullets, target_len=16)
-    enemy_bullets = pad_bullets(enemy_bullets, target_len=16)
-
-    enemy_bullets = merge_bullets(enemy_bullets, new_enemy_bullets)
-    enemy_bullets = update_bullets(enemy_bullets)
-
-    enemy_bullets = truncate_bullets(enemy_bullets, max_len=16)
-
-    # Enemy bullet collision with terrain
-    enemy_bullet_radius = 0.4
-    enemies_to_check_mask = enemy_bullets.alive
-    hit_terrain_mask_enemy = batched_terrain_hit(env_state, enemy_bullets.x, enemy_bullets.y, enemy_bullet_radius)
-
-    new_enemy_bullets_alive = enemy_bullets.alive & ~hit_terrain_mask_enemy
-    enemy_bullets = enemy_bullets._replace(alive=new_enemy_bullets_alive)
-    # Bullet-to-enemy collision detection
-    # Save previous enemy width (to check for new deaths)
-    w_prev = enemies.w
-
-    # Hit detection
-    bullets, enemies = check_enemy_hit(bullets, enemies)
-
-    # Find newly killed enemies (transition from w > 0 to w == 0)
-    new_killed = (w_prev > 0.0) & (enemies.w == 0.0)
-    score_delta = jnp.sum(new_killed).astype(jnp.float32) * 10.0
-
-    # Enemy or bullet hits ship
-    # 1. Call the new collision function to get a mask of hit enemies
-    hit_enemy_mask = check_ship_enemy_collisions(state, enemies, ship_radius=SHIP_RADIUS)
-    
-    # 2. Check if any enemy was hit
-    any_enemy_hit = jnp.any(hit_enemy_mask)
-
-    # 3. Find the types (sprite_idx) of the hit enemies
-    #    jnp.where(condition, value_if_true, value_if_false)
-    hit_enemy_types = jnp.where(hit_enemy_mask, enemies.sprite_idx, -1)
-
-    # 4. Determine if the ship should crash
-    # Rule: The ship only crashes if it hits a turret (orange or green)
-    crashed_on_turret = jnp.any(
-        (hit_enemy_types == int(SpriteIdx.ENEMY_ORANGE)) |
-        (hit_enemy_types == int(SpriteIdx.ENEMY_GREEN))
-    )
-
-    # 5. Update the ship's death status
-    # old crash condition OR new collision with turret condition
-    crashed = crashed_on_turret 
-    hit_by_bullet = check_ship_hit(state, enemy_bullets, hitbox_size=2)
-    hit_terr = terrain_hit(env_state, state.x, state.y, jnp.float32(2.0))
-    dead = crashed | hit_by_bullet | hit_terr
-
-    # 6. Make all hit enemies "disappear" (width and height become 0)
-    enemies = enemies._replace(
-        death_timer=jnp.where(
-            hit_enemy_mask, # If hit
-            ENEMY_EXPLOSION_FRAMES, # Set the timer to 120
-            enemies.death_timer # Otherwise, keep it the same
-        )
-    )
-
-    # ====== Crash Pipeline (Animation -> Lose Life -> Respawn/Game Over) ======
-    CRASH_FRAMES = jnp.int32(30)
-
-    # Is the crash animation already playing? (timer > 0 in the previous frame) 
-    was_crashing = env_state.crash_timer > 0
-
-    # Did the ship "just crash" this frame? (start the animation)
-    start_crash = (~was_crashing) & dead
-
-    # The next frame's crash timer (if just crashed -> set to 30; otherwise, count down to 0)
-    crash_timer_next = jnp.where(
-        start_crash, CRASH_FRAMES,
-        jnp.maximum(env_state.crash_timer - 1, 0)
-    )
-
-    # "Will the ship respawn at the end of this frame?" - If the previous timer was 1, it becomes 0 this frame, triggering respawn/life loss
-    respawn_now = (env_state.crash_timer == 1)
-
-    # Only lose a life at the moment of respawn; otherwise, it remains the same
-    lives_next = env_state.lives - jnp.where(respawn_now, jnp.int32(1), jnp.int32(0))
-
-    # Are all lives gone? (After losing this one, lives <= 0)
-    game_over = respawn_now & (lives_next <= 0)
-
-    # Respawn: Only reset the "player/player bullets/enemy bullets/cooldowns", keep the enemy state
-    def _respawn(_):
-        respawn_state = make_level_start_state(env_state.current_level)
-
-        # Apply scene-specific offset (reactor is -30, others are 0)
-        respawn_state = respawn_state._replace(
-            x = respawn_state.x + env_state.respawn_shift_x
-        )
-
-        return (
-            respawn_state,
-            create_empty_bullets_64(),                            # Player bullets cleared
-            create_empty_bullets_16(),                            # Enemy bullets cleared
-            jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),           # Enemy fire cooldown cleared
-            jnp.int32(0),                                         # Player cooldown cleared
-        )
-
-    def _keep(_):
-        return (state, bullets, enemy_bullets, fire_cooldown, cooldown)
-
-    # Use `lax.cond` to select which set of runtime values to return based on whether a respawn should occur
-    state, bullets, enemy_bullets, fire_cooldown, cooldown = jax.lax.cond(
-        respawn_now & ~game_over, _respawn, _keep, operand=None
-    )
-
-    # Reward: A large penalty for starting a crash, normal decay for other frames
-    reward = jnp.where(start_crash, -10.0, -1.0)
-
-    # A win only counts if there were "meaningful enemies" in the level that are now all gone
-    has_enemies     = jnp.any(enemies.w > 0.0)
-    all_dead        = jnp.all(enemies.w == 0.0)
-
-    reset_level_win = has_enemies & (~start_crash) & (crash_timer_next == 0) & all_dead
-    reset = reset_level_win
-
-    # ====== Reactor Objective Check ======
-    is_reactor = (env_state.terrain_sprite_idx == jnp.int32(int(SpriteIdx.REACTOR_TERR)))
-
-    # Check for reach (only in the reactor and if the destination is active)
-    dxg = state.x - env_state.reactor_dest_x
-    dyg = state.y - env_state.reactor_dest_y
-
-    dist2_goal = dxg*dxg + dyg*dyg
-    reach_goal = is_reactor & env_state.reactor_dest_active & (dist2_goal <= env_state.reactor_dest_radius**2)
-
-    # If reached: Level win (return to map) + bonus score
-    goal_reward = jnp.float32(100.0) 
-    score_delta = score_delta + jnp.where(reach_goal, goal_reward, jnp.float32(0.0))
-
-    # Merge resets (all enemies cleared OR reached goal -> return to map)
-    reset = reset | reach_goal
-
-    # Set active to False to prevent re-triggering
-    reactor_dest_active_next = jnp.where(reach_goal, jnp.array(False), env_state.reactor_dest_active)
-
-    # The game is only truly "done" when lives run out; a regular crash doesn't end the level
-    done = game_over
-
-    # Level ID doesn't change here; maintain the function signature
-    level = jnp.int32(-1)
-
-    # obs
-    obs = jnp.array([state.x, state.y, state.vx, state.vy, state.angle])
-
-    return (
-        obs, state, bullets, cooldown, enemies, enemy_bullets, fire_cooldown,
-        key, reward, score_delta,
-        crash_timer_next, lives_next, 
-        reactor_dest_active_next,
-        done, reset, level
-    )
 
 # ========== Arena Step Core ==========
 @jax.jit
@@ -2295,14 +2050,13 @@ def step_core(env_state: EnvState, action: int):
     def _game_is_running(state, act):
        # If the game is still running, use jax.lax.switch to call the correct
         # step function based on the game mode (0: map, 1: level, 2: arena).
-
         return jax.lax.switch(
-            jnp.clip(state.mode, 0, 2),
-            [step_map, _step_level_core, step_arena],
-            state,
-            act
-        )
-
+        jnp.clip(state.mode, 0, 2),
+        [step_map, _step_level_core, step_arena], # <--- 确保这里是 _step_level_core
+        state,
+        act
+    )
+    
     return jax.lax.cond(
         env_state.done,
         _game_is_over,
@@ -2319,91 +2073,85 @@ def step_full(env_state: EnvState, action: int, env_instance: 'JaxGravitar'):
         state transition logic for the entire game.
         """
         def _handle_reset(operands):
-            """This branch is executed only when the `reset` flag from step_core is True."""
+            """
+            This branch is executed only when the `reset` flag from step_core is True.
+            It handles all state transitions, such as entering a level or returning to the map.
+            """
             obs, current_state, reward, done, info, reset, level = operands
 
-            def _enter_level(inner_operands):
-                """Handles the transition from the map to a specific level."""
-                _, state_to_reset, inner_reward, _, inner_info, _, inner_level = inner_operands
+            # === BRANCH 1: ENTER A LEVEL ===
+            def _enter_level(_):
+                """Handles the transition from the map into a level."""
                 
-                # Wrapper for jax.pure_callback to call the Python-based reset_level method.
                 def _reset_level_py(key, level_val, state_val):
                     return env_instance.reset_level(key, level_val, state_val)
 
-                # Prepare for the callback by splitting the PRNG key.
-                result_shape_and_dtype = env_instance.reset_level_out_struct
-                new_main_key, subkey_for_reset = jax.random.split(state_to_reset.key)
+                new_main_key, subkey_for_reset = jax.random.split(current_state.key)
                 
-                # Call the pure Python reset_level function from within the JIT-compiled graph.
                 obs_reset, next_state = jax.pure_callback(
-                    _reset_level_py, result_shape_and_dtype,
-                    subkey_for_reset, inner_level, state_to_reset
+                    _reset_level_py, env_instance.reset_level_out_struct,
+                    subkey_for_reset, level, current_state
                 )
 
-                # Update the state with the new key and return.
                 next_state = next_state._replace(key=new_main_key)
                 enter_info = {**info, "level_cleared": jnp.array(False)}
 
-                return obs_reset, next_state, inner_reward, jnp.array(False), enter_info, jnp.array(True), inner_level
+                # Return the new state after entering the level. `done` is False.
+                return obs_reset, next_state, reward, jnp.array(False), enter_info, jnp.array(True), level
 
-            def _return_to_map(inner_operands):
-                """Handles the transition from a level back to the map, due to a win, loss, or crash."""
-                obs_map, state_to_reset, reward_map, _, info_map, _, level_map = inner_operands
-
-                # Determine if the return to map was caused by a death/crash event.
-                is_a_death_event = (level_map == -2) | info_map.get("crash", False) | info_map.get("hit_by_bullet", False) | info_map.get("reactor_crash_exit", False)
-
-                def _on_death(_):
-                    """Logic for when the player dies in a level."""
-                    lives_next = state_to_reset.lives - 1
-                    death_info = {**info_map, "level_cleared": jnp.array(False)}
-
-                    def _game_over(_):
-                        """If no lives are left, set the 'done' flag."""
-                        game_over_state = state_to_reset._replace(lives=jnp.int32(0), done=jnp.array(True))
-                    
-                        return obs_map, game_over_state, reward_map, jnp.array(True), death_info, jnp.array(True), level_map
-                
-                    def _lose_life(_):
-                        """If lives remain, reset to the map, preserving score and cleared status."""
-                        new_main_key, subkey_for_reset = jax.random.split(state_to_reset.key)
-
-                        obs_reset, map_state = env_instance.reset_map(
-                            subkey_for_reset, 
-                            lives=lives_next, 
-                            score=state_to_reset.score,
-                            reactor_destroyed=state_to_reset.reactor_destroyed,
-                            planets_cleared_mask=state_to_reset.planets_cleared_mask
-                        )
-
-                        map_state = map_state._replace(key=new_main_key)
-
-                        return obs_reset, map_state, reward_map, jnp.array(False), death_info, jnp.array(True), level_map
-                    
-                    return jax.lax.cond(lives_next <= 0, _game_over, _lose_life, operand=None)
+            # === BRANCH 2: RETURN TO THE MAP ===
+            def _return_to_map(_):
+                """Handles the transition from a level back to the map (due to win, loss, or crash)."""
+                is_a_death_event = (level == -2) | info.get("crash", False) | info.get("hit_by_bullet", False) | info.get("reactor_crash_exit", False)
 
                 def _on_win(_):
                     """Logic for when the player successfully completes a level."""
-                    new_main_key, subkey_for_reset = jax.random.split(state_to_reset.key)
-
+                    new_main_key, subkey_for_reset = jax.random.split(current_state.key)
                     obs_reset, map_state = env_instance.reset_map(
                         subkey_for_reset, 
-                        lives=state_to_reset.lives, 
-                        score=state_to_reset.score,
-                        reactor_destroyed=state_to_reset.reactor_destroyed,
-                        planets_cleared_mask=state_to_reset.planets_cleared_mask
+                        lives=current_state.lives, 
+                        score=current_state.score,
+                        reactor_destroyed=current_state.reactor_destroyed,
+                        planets_cleared_mask=current_state.planets_cleared_mask
+                    )
+                    map_state = map_state._replace(key=new_main_key)
+                    win_info = {**info, "level_cleared": jnp.array(True)}
+                    return obs_reset, map_state, reward, jnp.array(False), win_info, jnp.array(True), level
+
+                def _on_death(_):
+                    """Logic for when the player dies. This is now simple and clean."""
+                    # 1. Calculate the correct number of lives AFTER this death event.
+                    lives_after_death = current_state.lives -1
+                    death_info = {**info, "level_cleared": jnp.array(False)}
+                    
+                    # 2. Determine if the game is over based on the new life count.
+                    is_game_over = (lives_after_death <= 0)
+                    
+                    # 3. Reset to the map, passing the CORRECT number of lives.
+                    #    If the game is over, this call still prepares the final map state.
+                    new_main_key, subkey_for_reset = jax.random.split(current_state.key)
+                    obs_reset, map_state = env_instance.reset_map(
+                        subkey_for_reset, 
+                        lives=lives_after_death, 
+                        score=current_state.score,
+                        reactor_destroyed=current_state.reactor_destroyed,
+                        planets_cleared_mask=current_state.planets_cleared_mask
+                    )
+                    
+                    # 4. Finalize the state: update the key and set the 'done' flag if the game is over.
+                    final_map_state = map_state._replace(
+                        key=new_main_key,
+                        done=is_game_over
                     )
 
-                    map_state = map_state._replace(key=new_main_key)
+                    # 5. Return the final state.
+                    return obs_reset, final_map_state, reward, is_game_over, death_info, jnp.array(True), level
 
-                    win_info = {**info_map, "level_cleared": jnp.array(True)}
-
-                    return obs_reset, map_state, reward_map, jnp.array(False), win_info, jnp.array(True), level_map
-
+                # Choose the correct branch based on whether it was a death event.
                 return jax.lax.cond(is_a_death_event, _on_death, _on_win, operand=None)
             
-            # Main switch for handling resets: either enter a level or return to the map.
-            return jax.lax.cond(level >= 0, _enter_level, _return_to_map, operand=operands)
+            # Main switch for this handler: either enter a level (level >= 0) or return to the map.
+            return jax.lax.cond(level >= 0, _enter_level, _return_to_map, operand=None)
 
         def _no_reset(operands):
             """This branch is executed if the `reset` flag from step_core is False."""
@@ -2583,7 +2331,7 @@ class JaxGravitar(JaxEnvironment):
         try:
             done = bool(done.item() if hasattr(done, "item") else done)
         except Exception: pass
-
+        jax.debug.print("JaxGravitar.step is returning reward: {x}", x=reward)
         return obs, ns, reward, done, info
 
     def action_space(self) -> spaces.Discrete:

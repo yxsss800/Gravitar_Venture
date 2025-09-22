@@ -983,11 +983,11 @@ def ship_step(state: ShipState,
     thrust_pressed = jnp.isin(action, thrust_actions)
     down_pressed = jnp.isin(action, down_thrust_actions)
 
-    # Forward thrust, controlled by the UP key
+    # Forward thrust (vector addition), controlled by the UP key
     vx = jnp.where(thrust_pressed, vx + jnp.cos(angle) * thrust_power, vx)
     vy = jnp.where(thrust_pressed, vy + jnp.sin(angle) * thrust_power, vy)
 
-    # Reverse thrust, controlled by the DOWN key
+    # Reverse thrust (vector subtraction), controlled by the DOWN key
     vx = jnp.where(down_pressed, vx - jnp.cos(angle) * thrust_power, vx)
     vy = jnp.where(down_pressed, vy - jnp.sin(angle) * thrust_power, vy)
 
@@ -1792,7 +1792,6 @@ def _step_level_core(env_state: EnvState, action: int):
     )
 
     obs_vector = jnp.array([state.x, state.y, state.vx, state.vy, state.angle])
-
     obs = {'vector': obs_vector}
 
     crash_animation_finished = (state_after_ufo.crash_timer == 1)
@@ -1816,6 +1815,7 @@ def _step_level_core(env_state: EnvState, action: int):
     return obs, final_env_state, reward, game_over, info, reset, jnp.int32(-1)
 
 batched_terrain_hit = jax.vmap(terrain_hit, in_axes=(None, 0, 0, None))
+
 
 # ========== Arena Step Core ==========
 @jax.jit
@@ -1872,7 +1872,7 @@ def step_arena(env_state: EnvState, action: int):
     # a) Is the Saucer dead?
     # Death conditions: Hit by bullet OR collided with ship
     saucer_is_hit = hit_saucer_by_bullet | hit_saucer_by_contact
-    hp_after_hit = saucer_after_move.hp - jnp.where(saucer_is_hit, 1, 0) 
+    hp_after_hit = saucer_after_move.hp - jnp.where(saucer_is_hit, 1, 0)  # Simplified: 1 HP is lost per hit
     was_alive = saucer_after_move.alive
 
     is_dead_now = hp_after_hit <= 0

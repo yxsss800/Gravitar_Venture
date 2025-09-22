@@ -993,7 +993,7 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
     has_meaningful_enemies = jnp.any(state_after_ufo.enemies.hp > 0)
     reset_level_win = all_enemies_gone & has_meaningful_enemies & ~is_in_reactor
     reset = reset_level_win | win_reactor | reset_from_reactor_crash
-    game_over = death_event & (lives_next <= 0)
+    game_over = (death_event & (lives_next <= 0)) | win_reactor
     def _respawn_level_state(s):
         ship_respawn = make_level_start_state(s.current_level)._replace(x=make_level_start_state(s.current_level).x + s.respawn_shift_x)
         return s._replace(state=ship_respawn, bullets=create_empty_bullets_64(), enemy_bullets=create_empty_bullets_16(), fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32), cooldown=jnp.int32(0))

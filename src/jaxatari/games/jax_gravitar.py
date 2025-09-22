@@ -2650,8 +2650,8 @@ class JaxGravitar(JaxEnvironment):
                                         )
                 
                 new_tanks = tanks_in._replace(
-                                        x=tanks_in.x.at[t_idx_in].set(jnp.where(is_tank, x, jnp.float32(-1.0))), 
-                                        y=tanks_in.y.at[t_idx_in].set(jnp.where(is_tank, y, jnp.float32(-1.0))), 
+                                        x=tanks_in.x.at[t_idx_in].set(jnp.where(is_tank, x, jnp.float32(0.0))),
+                                        y=tanks_in.y.at[t_idx_in].set(jnp.where(is_tank, y, jnp.float32(0.0))),
                                         w=tanks_in.w.at[t_idx_in].set(jnp.where(is_tank, w, jnp.float32(0.0))), 
                                         h=tanks_in.h.at[t_idx_in].set(jnp.where(is_tank, h, jnp.float32(0.0))), 
                                         sprite_idx=tanks_in.sprite_idx.at[t_idx_in].set(jnp.where(is_tank, obj_type, jnp.int32(-1))), 
@@ -2663,14 +2663,13 @@ class JaxGravitar(JaxEnvironment):
         
         init_enemies = create_empty_enemies()
         init_tanks = FuelTanks(
-                    x=jnp.full((MAX_TANKS,), -1.0), 
-                    y=jnp.full((MAX_TANKS,), -1.0), 
-                    w=jnp.zeros((MAX_TANKS,)), 
-                    h=jnp.zeros((MAX_TANKS,)), 
-                    sprite_idx=jnp.full((MAX_TANKS,), -1), 
-                    active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)
-                    )
-        
+                            x=jnp.zeros((MAX_ENEMIES,)),
+                            y=jnp.zeros((MAX_ENEMIES,)),
+                            w=jnp.zeros((MAX_ENEMIES,)),
+                            h=jnp.zeros((MAX_ENEMIES,)),
+                            sprite_idx=jnp.full((MAX_ENEMIES,), -1),
+                            active=jnp.zeros((MAX_ENEMIES,), dtype=jnp.bool_)
+                        )
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(
             jnp.int32(0), 
             self.jax_layout["types"].shape[1], 

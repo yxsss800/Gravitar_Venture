@@ -86,6 +86,19 @@ SHIP_ANCHOR_Y = None
 DEBUG_DRAW_SHIP_ORIGIN = True
 PLAYER_FIRE_COOLDOWN_FRAMES = 30
 
+OBJ_SHIP_DIM    = 5    
+OBJ_BULLET_DIM  = 5    
+OBJ_ENEMY_DIM   = 5    
+OBJ_TANK_DIM    = 5    
+OBJ_UFO_DIM     = 5
+OBJ_SAUCER_DIM  = 5
+
+MAX_PLAYER_BULLETS = 2          
+MAX_ENEMIES        = 16         
+MAX_TANKS          = 8          
+MAX_ENEMY_BULLETS  = MAX_ENEMIES  
+MAX_UFO_BULLETS    = 1 
+
 # ---- Reward packing for wrappers (fixed-length vector) ----
 ALL_REWARD_KEYS = (
     "reward_enemies", "reward_reactor", "reward_ufo",
@@ -547,13 +560,21 @@ def create_empty_bullets_fixed(size: int) -> Bullets:
         alive=jnp.zeros((size,), dtype=bool)
     )
 
+def create_empty_player_bullets():
+    return create_empty_bullets_fixed(MAX_PLAYER_BULLETS)
+
+def create_empty_enemy_bullets():
+    return create_empty_bullets_fixed(MAX_ENEMY_BULLETS)
+
+def create_empty_ufo_bullets():
+    return create_empty_bullets_fixed(MAX_UFO_BULLETS)
 
 def create_empty_bullets_64():
-    return create_empty_bullets_fixed(64)
+    return create_empty_player_bullets()
 
 
 def create_empty_bullets_16():
-    return create_empty_bullets_fixed(16)
+    return create_empty_enemy_bullets()
 
 
 @jax.jit
@@ -581,10 +602,10 @@ def create_env_state(rng: jnp.ndarray) -> EnvState:
             vy=jnp.array(0.0),
             angle=jnp.array(0.0),
         ),
-        bullets=create_empty_bullets_64(),
+        bullets=create_empty_player_bullets(),
         cooldown=jnp.array(0, dtype=jnp.int32),
         enemies=create_empty_enemies(),
-        enemy_bullets=create_empty_bullets_16(),
+        enemy_bullets=create_empty_enemy_bullets(),
         fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
         key=rng,
         key_alt=rng,
@@ -604,7 +625,7 @@ def create_env_state(rng: jnp.ndarray) -> EnvState:
         ufo_used=jnp.array(False),
         ufo_home_x=jnp.float32(0.0),
         ufo_home_y=jnp.float32(0.0),
-        ufo_bullets=create_empty_bullets_16(),
+        ufo_bullets=create_empty_ufo_bullets(),
     )
 
 @jax.jit
@@ -1184,44 +1205,40 @@ def enemy_fire(enemies: Enemies,
                ship_y: float,
                enemy_bullet_speed: float,
                fire_cooldown: jnp.ndarray,  # shape should match len(enemies.x)
+               prev_enemy_bullets: Bullets,
                fire_interval: int,
                key: jax.random.PRNGKey
                ) -> tuple[Bullets, jnp.ndarray, jax.random.PRNGKey]:
     ex_center = enemies.x + enemies.w / 2
     ey_center = enemies.y - enemies.h / 2
 
-    dx = ship_x - ex_center                 # shape=(N,)
-    dy = ship_y - ey_center                 # shape=(N,)
+    ex_center = enemies.x + enemies.w / 2
+    ey_center = enemies.y - enemies.h / 2
 
-    dist = jnp.sqrt(dx ** 2 + dy ** 2)
-    dist = jnp.where(dist < 1e-3, 1.0, dist)
-
+    dx = ship_x - ex_center
+    dy = ship_y - ey_center
+    dist = jnp.maximum(jnp.sqrt(dx*dx + dy*dy), 1e-3)
     vx = dx / dist * enemy_bullet_speed
     vy = dy / dist * enemy_bullet_speed
-    
+ 
     # 1. Determine which turrets "should" fire in this frame
     alive_mask = (enemies.w > 0.0) & (enemies.death_timer == 0)
-    should_fire = (fire_cooldown == 0) & alive_mask
+    no_bullet    = ~prev_enemy_bullets.alive
+    should_fire  = (fire_cooldown == 0) & alive_mask & no_bullet
     
     # 2. Calculate the cooldown for the "next frame"
     # - If a turret fired this frame (`should_fire` is True), its cooldown is reset to `fire_interval`
     # - Otherwise, the cooldown remains unchanged (since the decrement happens in `_step_level_core`)
-    new_fire_cooldown = jnp.where(should_fire, fire_interval, fire_cooldown)
-    x_out = jnp.where(should_fire, ex_center, -1.0)
-    y_out = jnp.where(should_fire, ey_center, -1.0)
+    new_fire_cooldown = jnp.where(should_fire, jnp.int32(fire_interval), fire_cooldown)
 
-    vx_out = jnp.where(should_fire, vx, 0.0)
-    vy_out = jnp.where(should_fire, vy, 0.0)
-
-    bullets_out = Bullets(
-        x=x_out,
-        y=y_out,
-        vx=vx_out,
-        vy=vy_out,
-        alive=should_fire
+    new_enemy_bullets = Bullets(
+        x     = jnp.where(should_fire, ex_center, prev_enemy_bullets.x),
+        y     = jnp.where(should_fire, ey_center, prev_enemy_bullets.y),
+        vx    = jnp.where(should_fire, vx,        prev_enemy_bullets.vx),
+        vy    = jnp.where(should_fire, vy,        prev_enemy_bullets.vy),
+        alive = jnp.where(should_fire, True,      prev_enemy_bullets.alive),
     )
-
-    return bullets_out, new_fire_cooldown, key
+    return new_enemy_bullets, new_fire_cooldown, key
 
 
 # ========== Collision Detection ==========
@@ -1350,7 +1367,12 @@ def step_map(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, EnvState, j
     rx, ry, has_reactor = _get_reactor_center(new_env.planets_px, new_env.planets_py, new_env.planets_pi)
     should_spawn = (timer == 0) & (~saucer.alive) & has_reactor
 
-    saucer = jax.lax.cond(should_spawn, lambda: _spawn_saucer_at(rx, ry, new_env.state.x, new_env.state.y, SAUCER_SPEED_MAP), lambda: saucer)
+    saucer = jax.lax.cond(
+        should_spawn,
+        lambda _: _spawn_saucer_at(rx, ry, new_env.state.x, new_env.state.y, SAUCER_SPEED_MAP),
+        lambda s: s,
+        operand=saucer
+    )
     timer = jnp.where(should_spawn, jnp.int32(99999), timer)
     
     saucer_after_move = jax.lax.cond(saucer.alive, lambda s: _update_saucer_seek(s, new_env.state.x, new_env.state.y, SAUCER_SPEED_MAP), lambda s: s, operand=saucer)
@@ -1489,7 +1511,7 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
         return env._replace(
             ufo=UFOState(x=x0, y=final_y0, vx=vx, vy=jnp.float32(0.0), hp=jnp.int32(1), alive=jnp.array(True, dtype=jnp.bool_), death_timer=jnp.int32(0)),
             ufo_used=jnp.array(True, dtype=jnp.bool_), ufo_home_x=x0, ufo_home_y=final_y0,
-            ufo_bullets=create_empty_bullets_16(),
+            ufo_bullets=create_empty_ufo_bullets(),
         )
     
     can_spawn_ufo = (env_state.mode == jnp.int32(1)) & (~env_state.ufo_used) & (env_state.terrain_bank_idx != jnp.int32(5))
@@ -1562,64 +1584,24 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
 
     # === Enemy LOGIC ===
     # 1. Prepare the state for the current frame
-    current_fire_cooldown = state_after_ufo.fire_cooldown
+    current_fire_cooldown = state_after_ufo.fire_cooldown          # (MAX_ENEMIES,)
     current_key = state_after_ufo.key
-    current_enemy_bullets = state_after_ufo.enemy_bullets
-    
-    # 2. Decide which turrets "can" fire now
-    can_fire_globally = _bullets_alive_count(current_enemy_bullets) < jnp.int32(1)
-    is_turret = (enemies.sprite_idx == jnp.int32(int(SpriteIdx.ENEMY_ORANGE))) | \
-                (enemies.sprite_idx == jnp.int32(int(SpriteIdx.ENEMY_GREEN))) | \
-                (enemies.sprite_idx == jnp.int32(int(SpriteIdx.ENEMY_ORANGE_FLIPPED)))
-    
-    turrets_ready_mask = (enemies.w > jnp.float32(0.0)) & (current_fire_cooldown == jnp.int32(0)) & is_turret
-    should_fire_mask = turrets_ready_mask & can_fire_globally
-    any_turret_firing = jnp.any(should_fire_mask)
-    
-    # 3. Calculate the cooldown for the "next frame"
-    # First, decrement the cooldown for all turrets
-    next_frame_cooldown = jnp.maximum(current_fire_cooldown - jnp.int32(1), jnp.int32(0))
-    # Then, for turrets that "just" fired, reset their cooldown to 60
+    current_enemy_bullets = state_after_ufo.enemy_bullets          # Bullets with length = MAX_ENEMIES
+
     fire_interval = jnp.int32(60)
-    next_frame_cooldown = jnp.where(should_fire_mask, fire_interval, next_frame_cooldown)
-    
-    # 4. If any turrets are firing, generate new bullets
-    def _generate_bullets(_):
-        ex_center = enemies.x + enemies.w / jnp.float32(2.0)
-        ey_center = enemies.y - enemies.h / jnp.float32(2.0)
 
-        dx = ship_after_move.x - ex_center
-        dy = ship_after_move.y - ey_center
-
-        dist = jnp.sqrt(dx ** jnp.float32(2.0) + dy ** jnp.float32(2.0))
-        dist = jnp.where(dist < jnp.float32(1e-3), jnp.float32(1.0), dist)
-
-        vx = dx / dist * (jnp.float32(2.0) * jnp.float32(0.2) * jnp.float32(0.3))
-        vy = dy / dist * (jnp.float32(2.0) * jnp.float32(0.2) * jnp.float32(0.3))
-
-        x_out = jnp.where(should_fire_mask, ex_center, jnp.float32(-1.0))
-        y_out = jnp.where(should_fire_mask, ey_center, jnp.float32(-1.0))
-
-        vx_out = jnp.where(should_fire_mask, vx, jnp.float32(0.0))
-        vy_out = jnp.where(should_fire_mask, vy, jnp.float32(0.0))
-
-        return Bullets(x=x_out, y=y_out, vx=vx_out, vy=vy_out, alive=should_fire_mask)
-    
-    def _get_empty_bullets(_):
-
-        return create_empty_bullets_16()
-
-    new_enemy_bullets = jax.lax.cond(
-        any_turret_firing,
-        _generate_bullets,
-        _get_empty_bullets,
-        operand=None
+    enemy_bullets, new_fire_cooldown, key = enemy_fire(
+        enemies=enemies,
+        ship_x=ship_after_move.x,
+        ship_y=ship_after_move.y,
+        enemy_bullet_speed=jnp.float32(2.0) * jnp.float32(0.2) * jnp.float32(0.3),  
+        fire_cooldown=current_fire_cooldown,      
+        prev_enemy_bullets=current_enemy_bullets, 
+        fire_interval=fire_interval,
+        key=current_key,
     )
 
-    # 5. Merge bullets and assign the state to final variables
-    enemy_bullets = merge_bullets(current_enemy_bullets, new_enemy_bullets)
-    fire_cooldown = next_frame_cooldown
-    key = current_key 
+    fire_cooldown = jnp.maximum(new_fire_cooldown - jnp.int32(1), jnp.int32(0))
     # === Enemy LOGIC Over===
 
     # --- 5. Advance All Bullets ---
@@ -1714,7 +1696,13 @@ def _step_level_core(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, Env
         s, b, eb, fc, cd = operands  # <-- THIS IS THE FIX: Unpack the arguments here.
         ship_respawn = make_level_start_state(s.current_level)
         ship_respawn = ship_respawn._replace(x=ship_respawn.x + s.respawn_shift_x)
-        return (ship_respawn, create_empty_bullets_64(), create_empty_bullets_16(), jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32), jnp.int32(0))
+        return (
+            ship_respawn,
+            create_empty_player_bullets(),  
+            create_empty_enemy_bullets(),    
+            jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),  # fire_cooldown
+            jnp.int32(0),                    # player cooldown
+        )
 
     def _keep_state_no_respawn(operands):
         # This function doesn't use the input operands, but instead directly
@@ -2025,7 +2013,7 @@ def _ufo_dead_step(e, ship, bullets):
     u = e.ufo
     u2 = u._replace(death_timer=jnp.maximum(u.death_timer - jnp.int32(1), jnp.int32(0)))
     # Return the COMPLETE environment state
-    return e._replace(ufo=u2, ufo_bullets=create_empty_bullets_16(), bullets=bullets)
+    return e._replace(ufo=u2, ufo_bullets=create_empty_ufo_bullets(), bullets=bullets)
 
 @jax.jit
 def _update_ufo(env: EnvState, ship: ShipState, bullets: Bullets) -> EnvState:
@@ -2450,52 +2438,76 @@ class JaxGravitar(JaxEnvironment):
     def object_centric_observation_space(self) -> spaces.Dict:
         """Returns the observation space for object-centric observations."""
         return spaces.Dict({
-            "ship": spaces.Box(low=-jnp.inf, high=jnp.inf, shape=(5,), dtype=jnp.float32),
-            "player_bullets": spaces.Box(low=-jnp.inf, high=jnp.inf, shape=(MAX_BULLETS, 5), dtype=jnp.float32),
-            "enemies": spaces.Box(low=-jnp.inf, high=jnp.inf, shape=(MAX_ENEMIES, 5), dtype=jnp.float32),
-            "enemy_bullets": spaces.Box(low=-jnp.inf, high=jnp.inf, shape=(16, 5), dtype=jnp.float32),
-            "ufo": spaces.Box(low=-jnp.inf, high=jnp.inf, shape=(5,), dtype=jnp.float32),
-            "saucer": spaces.Box(low=-jnp.inf, high=jnp.inf, shape=(5,), dtype=jnp.float32),
+            "ship": spaces.Box(low=-np.inf, high=np.inf, shape=(OBJ_SHIP_DIM,), dtype=np.float32),
+            "player_bullets": spaces.Box(
+                low=-np.inf, high=np.inf, shape=(MAX_PLAYER_BULLETS, OBJ_BULLET_DIM), dtype=np.float32
+            ),
+            "enemy_bullets": spaces.Box(
+                low=-np.inf, high=np.inf, shape=(MAX_ENEMY_BULLETS, OBJ_BULLET_DIM), dtype=np.float32
+            ),
+            "enemies": spaces.Box(
+                low=-np.inf, high=np.inf, shape=(MAX_ENEMIES, OBJ_ENEMY_DIM), dtype=np.float32
+            ),
+            "fuel_tanks": spaces.Box(
+                low=-np.inf, high=np.inf, shape=(MAX_TANKS, OBJ_TANK_DIM), dtype=np.float32
+            ),
+            "ufo": spaces.Box(low=-np.inf, high=np.inf, shape=(OBJ_UFO_DIM,), dtype=np.float32),
+            "saucer": spaces.Box(low=-np.inf, high=np.inf, shape=(OBJ_SAUCER_DIM,), dtype=np.float32),
         })
     
-    def get_object_centric_obs(self, state: EnvState) -> Dict[str, jnp.ndarray]:
-        """Extracts object-centric observations from the environment state."""
-        ship_obs = jnp.array([
-            state.state.x, state.state.y, state.state.vx, state.state.vy, state.state.angle
-        ])
-        
-        player_bullets_obs = jnp.stack([
-            state.bullets.x, state.bullets.y, state.bullets.vx, state.bullets.vy,
-            state.bullets.alive.astype(jnp.float32)
-        ], axis=-1)
-        
-        enemies_obs = jnp.stack([
-            state.enemies.x, state.enemies.y, state.enemies.w, state.enemies.h,
-            (state.enemies.hp > 0).astype(jnp.float32)
-        ], axis=-1)
-        
-        enemy_bullets_obs = jnp.stack([
-            state.enemy_bullets.x, state.enemy_bullets.y, state.enemy_bullets.vx, state.enemy_bullets.vy,
-            state.enemy_bullets.alive.astype(jnp.float32)
-        ], axis=-1)
+    @staticmethod
+    def _pad(mat: jnp.ndarray, rows: int) -> jnp.ndarray:
+        # 目标：返回 (rows, d)
+        n = mat.shape[0]              # Python int（静态）
+        d = mat.shape[1]              # Python int（静态）
 
-        ufo_obs = jnp.array([
-            state.ufo.x, state.ufo.y, state.ufo.vx, state.ufo.vy, 
-            state.ufo.alive.astype(jnp.float32)
-        ])
+        if n >= rows:                 # 纯 Python 分支，条件是静态的
+            return mat[:rows, :]
+        else:
+            pad_rows = rows - n       # 纯 Python 计算
+            pad = jnp.zeros((pad_rows, d), dtype=mat.dtype)  # 形状是静态整数
+            return jnp.concatenate([mat, pad], axis=0)
 
-        saucer_obs = jnp.array([
-            state.saucer.x, state.saucer.y, state.saucer.vx, state.saucer.vy, 
-            state.saucer.alive.astype(jnp.float32)
-        ])
+    def get_object_centric_obs(self, s: EnvState):
+        ship = jnp.stack([s.state.x, s.state.y, s.state.vx, s.state.vy, s.state.angle]).astype(jnp.float32)
+
+        pb = jnp.stack([
+            s.bullets.x, s.bullets.y, s.bullets.vx, s.bullets.vy,
+            s.bullets.alive.astype(jnp.float32)
+        ], axis=1)
+        pb = jnp.nan_to_num(pb, nan=0.0, posinf=0.0, neginf=0.0)
+        pb = self._pad(pb, int(MAX_PLAYER_BULLETS))
+
+        eb = jnp.stack([
+            s.enemy_bullets.x, s.enemy_bullets.y, s.enemy_bullets.vx, s.enemy_bullets.vy,
+            s.enemy_bullets.alive.astype(jnp.float32)
+        ], axis=1)
+        eb = jnp.nan_to_num(eb, nan=0.0, posinf=0.0, neginf=0.0)
+
+        en = jnp.stack([
+            s.enemies.x, s.enemies.y, s.enemies.vx, jnp.zeros_like(s.enemies.vx),
+            (s.enemies.hp > 0).astype(jnp.float32)
+        ], axis=1)
+        en = jnp.nan_to_num(en, nan=0.0, posinf=0.0, neginf=0.0)
+
+        tk = jnp.stack([
+            s.fuel_tanks.x, s.fuel_tanks.y, s.fuel_tanks.active.astype(jnp.float32),
+            jnp.zeros_like(s.fuel_tanks.x), jnp.zeros_like(s.fuel_tanks.x)
+        ], axis=1)
+        tk = jnp.nan_to_num(tk, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # UFO / saucer -> (5,)
+        ufo = jnp.stack([s.ufo.x, s.ufo.y, s.ufo.vx, s.ufo.vy, s.ufo.alive.astype(jnp.float32)]).astype(jnp.float32)
+        sau = jnp.stack([s.saucer.x, s.saucer.y, s.saucer.vx, s.saucer.vy, s.saucer.alive.astype(jnp.float32)]).astype(jnp.float32)
 
         return {
-            "ship": ship_obs,
-            "player_bullets": player_bullets_obs,
-            "enemies": enemies_obs,
-            "enemy_bullets": enemy_bullets_obs,
-            "ufo": ufo_obs,
-            "saucer": saucer_obs,
+            "ship":          jnp.nan_to_num(ship, nan=0.0, posinf=0.0, neginf=0.0),
+            "player_bullets": pb,
+            "enemy_bullets":  eb,
+            "enemies":        en,
+            "fuel_tanks":     tk,
+            "ufo":            jnp.nan_to_num(ufo, nan=0.0, posinf=0.0, neginf=0.0),
+            "saucer":         jnp.nan_to_num(sau, nan=0.0, posinf=0.0, neginf=0.0),
         }
 
     def get_ram(self, state: EnvState) -> jnp.ndarray:
@@ -2508,10 +2520,11 @@ class JaxGravitar(JaxEnvironment):
         """No resources to close in this JAX environment."""
         pass 
 
-    def seed(self, seed: Optional[int] = None) -> jnp.ndarray:
+    def seed(self, seed: int | None = None):
         if seed is None:
-            return jax.random.PRNGKey(0) 
-        return jax.random.PRNGKey(seed)
+            seed = 0
+        self._rng_key = jrandom.PRNGKey(int(seed))
+        return [int(seed)]
     
     def render(self, env_state: EnvState) -> jnp.ndarray:
         """Renders the state using the pure JAX renderer."""
@@ -2554,7 +2567,7 @@ class JaxGravitar(JaxEnvironment):
             reactor_dest_radius=jnp.float32(0.4), mode_timer=jnp.int32(0), saucer=make_default_saucer(),
             saucer_spawn_timer=jnp.int32(SAUCER_SPAWN_DELAY_FRAMES), map_return_x=jnp.float32(0.0), map_return_y=jnp.float32(0.0),
             ufo=make_empty_ufo(), ufo_used=jnp.array(False, dtype=jnp.bool_), ufo_home_x=jnp.float32(0.0), ufo_home_y=jnp.float32(0.0),
-            ufo_bullets=create_empty_bullets_16(), level_offset=jnp.array([0, 0], dtype=jnp.float32),
+            ufo_bullets=create_empty_ufo_bullets(), level_offset=jnp.array([0, 0], dtype=jnp.float32),
             reactor_destroyed=final_reactor_destroyed, planets_cleared_mask=final_cleared_mask,
         )
         

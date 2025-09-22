@@ -2607,7 +2607,7 @@ class JaxGravitar(JaxEnvironment):
         env_state = EnvState(
             mode=jnp.int32(0), state=ship_state, bullets=create_empty_bullets_64(),
             cooldown=jnp.array(0, dtype=jnp.int32), enemies=create_empty_enemies(),
-            fuel_tanks=FuelTanks(x=jnp.full((MAX_TANKS,), -1.0), y=jnp.full((MAX_TANKS,), -1.0), w=jnp.zeros((MAX_TANKS,)), h=jnp.zeros((MAX_TANKS,)), sprite_idx=jnp.full((MAX_TANKS,), -1), active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)),
+            fuel_tanks=FuelTanks(x=jnp.full((MAX_TANKS,), 0.0), y=jnp.full((MAX_TANKS,), 0.0), w=jnp.zeros((MAX_TANKS,)), h=jnp.zeros((MAX_TANKS,)), sprite_idx=jnp.full((MAX_TANKS,), -1), active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)),
             enemy_bullets=create_empty_bullets_16(), fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
             key=key, key_alt=key, score=jnp.array(score if score is not None else 0.0, dtype=jnp.float32),
             done=jnp.array(False, dtype=jnp.bool_), lives=jnp.array(lives if lives is not None else MAX_LIVES, dtype=jnp.int32),

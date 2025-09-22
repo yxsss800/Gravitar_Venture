@@ -2296,6 +2296,27 @@ def get_action_from_key():
     # If no key is pressed, return NOOP (No Operation)
     return 0
 
+def _to_mat_bullets(b: Bullets, cap: int) -> jnp.ndarray:
+    x = (b.x[:cap]).astype(jnp.float32)
+    y = (b.y[:cap]).astype(jnp.float32)
+    vx = (b.vx[:cap]).astype(jnp.float32)
+    vy = (b.vy[:cap]).astype(jnp.float32)
+    alive = (b.alive[:cap]).astype(jnp.float32)  # 0/1
+    mat = jnp.stack([x, y, vx, vy, alive], axis=-1)
+    pad = jnp.zeros((cap - mat.shape[0], 5), mat.dtype)
+    return jnp.concatenate([mat, pad], axis=0)
+
+def _to_mat_enemies(e: Enemies, cap: int) -> jnp.ndarray:
+    x, y, w, h, hp = e.x[:cap], e.y[:cap], e.w[:cap], e.h[:cap], e.hp[:cap].astype(jnp.float32)
+    mat = jnp.stack([x, y, w, h, hp], axis=-1)
+    pad = jnp.zeros((cap - mat.shape[0], 5), mat.dtype)
+    return jnp.concatenate([mat, pad], axis=0)
+
+def _to_mat_tanks(t: FuelTanks, cap: int) -> jnp.ndarray:
+    x, y, w, h, active = t.x[:cap], t.y[:cap], t.w[:cap], t.h[:cap], t.active[:cap].astype(jnp.float32)
+    mat = jnp.stack([x, y, w, h, active], axis=-1)
+    pad = jnp.zeros((cap - mat.shape[0], 5), mat.dtype)
+    return jnp.concatenate([mat, pad], axis=0)
 
 class JaxGravitar(JaxEnvironment):
     def __init__(self, obs_type="object_centric"):
@@ -2437,77 +2458,96 @@ class JaxGravitar(JaxEnvironment):
 
     def object_centric_observation_space(self) -> spaces.Dict:
         """Returns the observation space for object-centric observations."""
+        X_MIN, X_MAX = 0.0, float(WINDOW_WIDTH)
+        Y_MIN, Y_MAX = float(HUD_HEIGHT), float(WINDOW_HEIGHT)
+
+        V_MIN, V_MAX = -5.0, 5.0
+        ANG_MIN, ANG_MAX = -math.pi, math.pi
+        
+        W_MIN, W_MAX = 0.0, float(WINDOW_WIDTH)
+        H_MIN, H_MAX = 0.0, float(WINDOW_HEIGHT)
+        HP_MIN, HP_MAX = 0.0, 10.0
+        BIN_MIN, BIN_MAX = 0.0, 1.0  
+
         return spaces.Dict({
-            "ship": spaces.Box(low=-np.inf, high=np.inf, shape=(OBJ_SHIP_DIM,), dtype=np.float32),
+            "ship": spaces.Box(
+                low=np.array([X_MIN, Y_MIN, V_MIN, V_MIN, ANG_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, V_MAX, V_MAX, ANG_MAX], np.float32),
+                shape=(OBJ_SHIP_DIM,), dtype=np.float32,
+            ),
             "player_bullets": spaces.Box(
-                low=-np.inf, high=np.inf, shape=(MAX_PLAYER_BULLETS, OBJ_BULLET_DIM), dtype=np.float32
+                low=np.array([X_MIN, Y_MIN, V_MIN, V_MIN, BIN_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, V_MAX, V_MAX, BIN_MAX], np.float32),
+                shape=(MAX_PLAYER_BULLETS, OBJ_BULLET_DIM), dtype=np.float32,
             ),
             "enemy_bullets": spaces.Box(
-                low=-np.inf, high=np.inf, shape=(MAX_ENEMY_BULLETS, OBJ_BULLET_DIM), dtype=np.float32
+                low=np.array([X_MIN, Y_MIN, V_MIN, V_MIN, BIN_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, V_MAX, V_MAX, BIN_MAX], np.float32),
+                shape=(MAX_ENEMY_BULLETS, OBJ_BULLET_DIM), dtype=np.float32,
             ),
             "enemies": spaces.Box(
-                low=-np.inf, high=np.inf, shape=(MAX_ENEMIES, OBJ_ENEMY_DIM), dtype=np.float32
+                low=np.array([X_MIN, Y_MIN, W_MIN, H_MIN, HP_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, W_MAX, H_MAX, HP_MAX], np.float32),
+                shape=(MAX_ENEMIES, OBJ_ENEMY_DIM), dtype=np.float32,
             ),
             "fuel_tanks": spaces.Box(
-                low=-np.inf, high=np.inf, shape=(MAX_TANKS, OBJ_TANK_DIM), dtype=np.float32
+                low=np.array([X_MIN, Y_MIN, W_MIN, H_MIN, BIN_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, W_MAX, H_MAX, BIN_MAX], np.float32),
+                shape=(MAX_TANKS, OBJ_TANK_DIM), dtype=np.float32,
             ),
-            "ufo": spaces.Box(low=-np.inf, high=np.inf, shape=(OBJ_UFO_DIM,), dtype=np.float32),
-            "saucer": spaces.Box(low=-np.inf, high=np.inf, shape=(OBJ_SAUCER_DIM,), dtype=np.float32),
+            "ufo": spaces.Box(
+                low=np.array([X_MIN, Y_MIN, V_MIN, V_MIN, BIN_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, V_MAX, V_MAX, BIN_MAX], np.float32),
+                shape=(OBJ_UFO_DIM,), dtype=np.float32,
+            ),
+            "saucer": spaces.Box(
+                low=np.array([X_MIN, Y_MIN, V_MIN, V_MIN, BIN_MIN], np.float32),
+                high=np.array([X_MAX, Y_MAX, V_MAX, V_MAX, BIN_MAX], np.float32),
+                shape=(OBJ_SAUCER_DIM,), dtype=np.float32,
+            ),
         })
     
     @staticmethod
     def _pad(mat: jnp.ndarray, rows: int) -> jnp.ndarray:
-        # 目标：返回 (rows, d)
-        n = mat.shape[0]              # Python int（静态）
-        d = mat.shape[1]              # Python int（静态）
+        
+        n = mat.shape[0]              
+        d = mat.shape[1]              
 
-        if n >= rows:                 # 纯 Python 分支，条件是静态的
+        if n >= rows:                 
             return mat[:rows, :]
         else:
-            pad_rows = rows - n       # 纯 Python 计算
-            pad = jnp.zeros((pad_rows, d), dtype=mat.dtype)  # 形状是静态整数
+            pad_rows = rows - n      
+            pad = jnp.zeros((pad_rows, d), dtype=mat.dtype)  
             return jnp.concatenate([mat, pad], axis=0)
 
-    def get_object_centric_obs(self, s: EnvState):
-        ship = jnp.stack([s.state.x, s.state.y, s.state.vx, s.state.vy, s.state.angle]).astype(jnp.float32)
+    def get_object_centric_obs(self, ns: EnvState):
+        ship = jnp.array(
+            [ns.state.x, ns.state.y, ns.state.vx, ns.state.vy, ns.state.angle],
+            dtype=jnp.float32
+        )
 
-        pb = jnp.stack([
-            s.bullets.x, s.bullets.y, s.bullets.vx, s.bullets.vy,
-            s.bullets.alive.astype(jnp.float32)
-        ], axis=1)
-        pb = jnp.nan_to_num(pb, nan=0.0, posinf=0.0, neginf=0.0)
-        pb = self._pad(pb, int(MAX_PLAYER_BULLETS))
+        pb = _to_mat_bullets(ns.bullets,       MAX_PLAYER_BULLETS)  # (2,5)
+        eb = _to_mat_bullets(ns.enemy_bullets, MAX_ENEMY_BULLETS)   # (16,5)
+        en = _to_mat_enemies(ns.enemies,       MAX_ENEMIES)         # (16,5)
+        tk = _to_mat_tanks(ns.fuel_tanks,      MAX_TANKS)           # (8,5)
 
-        eb = jnp.stack([
-            s.enemy_bullets.x, s.enemy_bullets.y, s.enemy_bullets.vx, s.enemy_bullets.vy,
-            s.enemy_bullets.alive.astype(jnp.float32)
-        ], axis=1)
-        eb = jnp.nan_to_num(eb, nan=0.0, posinf=0.0, neginf=0.0)
-
-        en = jnp.stack([
-            s.enemies.x, s.enemies.y, s.enemies.vx, jnp.zeros_like(s.enemies.vx),
-            (s.enemies.hp > 0).astype(jnp.float32)
-        ], axis=1)
-        en = jnp.nan_to_num(en, nan=0.0, posinf=0.0, neginf=0.0)
-
-        tk = jnp.stack([
-            s.fuel_tanks.x, s.fuel_tanks.y, s.fuel_tanks.active.astype(jnp.float32),
-            jnp.zeros_like(s.fuel_tanks.x), jnp.zeros_like(s.fuel_tanks.x)
-        ], axis=1)
-        tk = jnp.nan_to_num(tk, nan=0.0, posinf=0.0, neginf=0.0)
-
-        # UFO / saucer -> (5,)
-        ufo = jnp.stack([s.ufo.x, s.ufo.y, s.ufo.vx, s.ufo.vy, s.ufo.alive.astype(jnp.float32)]).astype(jnp.float32)
-        sau = jnp.stack([s.saucer.x, s.saucer.y, s.saucer.vx, s.saucer.vy, s.saucer.alive.astype(jnp.float32)]).astype(jnp.float32)
+        ufo = jnp.array(
+            [ns.ufo.x, ns.ufo.y, ns.ufo.vx, ns.ufo.vy, ns.ufo.alive.astype(jnp.float32)],
+            dtype=jnp.float32
+        )
+        saucer = jnp.array(
+            [ns.saucer.x, ns.saucer.y, ns.saucer.vx, ns.saucer.vy, ns.saucer.alive.astype(jnp.float32)],
+            dtype=jnp.float32
+        )
 
         return {
-            "ship":          jnp.nan_to_num(ship, nan=0.0, posinf=0.0, neginf=0.0),
+            "ship": ship,
             "player_bullets": pb,
-            "enemy_bullets":  eb,
-            "enemies":        en,
-            "fuel_tanks":     tk,
-            "ufo":            jnp.nan_to_num(ufo, nan=0.0, posinf=0.0, neginf=0.0),
-            "saucer":         jnp.nan_to_num(sau, nan=0.0, posinf=0.0, neginf=0.0),
+            "enemy_bullets": eb,
+            "enemies": en,
+            "fuel_tanks": tk,
+            "ufo": ufo,
+            "saucer": saucer,
         }
 
     def get_ram(self, state: EnvState) -> jnp.ndarray:

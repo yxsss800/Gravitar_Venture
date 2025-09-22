@@ -579,6 +579,7 @@ def create_empty_bullets_16():
     return create_empty_enemy_bullets()
 
 
+
 @jax.jit
 def create_empty_enemies():
     return Enemies(
@@ -1887,7 +1888,14 @@ def step_arena(env_state: EnvState, action: int) -> Tuple[jnp.ndarray, EnvState,
     final_env_state = jax.lax.cond(back_to_map_signal, _go_to_map_win, lambda e: e, final_env_state)
 
     # The final `reset` signal is either "crash finished" or "win exit"
-    return obs, final_env_state, jnp.float32(reward_saucer_kill), jnp.array(False, dtype=jnp.bool_), info, reset_signal | back_to_map_signal, jnp.int32(-1)
+    reset = reset_signal | back_to_map_signal
+
+    # 如果重置是由玩家坠毁触发的 (reset_signal)，就把返回的level设为-2（死亡信号）
+    # 否则，就是普通退出（比如打赢了），返回-1
+    final_level_id = jnp.where(reset_signal, jnp.int32(-2), jnp.int32(-1))
+
+    # 使用新计算出的 reset 信号和 final_level_id 返回
+    return obs, final_env_state, jnp.float32(reward_saucer_kill), jnp.array(False, dtype=jnp.bool_), info, reset, final_level_id
 
 
 @jax.jit
@@ -2650,8 +2658,8 @@ class JaxGravitar(JaxEnvironment):
                                         )
                 
                 new_tanks = tanks_in._replace(
-                                        x=tanks_in.x.at[t_idx_in].set(jnp.where(is_tank, x, jnp.float32(-1.0))), 
-                                        y=tanks_in.y.at[t_idx_in].set(jnp.where(is_tank, y, jnp.float32(-1.0))), 
+                                        x=tanks_in.x.at[t_idx_in].set(jnp.where(is_tank, x, jnp.float32(0.0))),
+                                        y=tanks_in.y.at[t_idx_in].set(jnp.where(is_tank, y, jnp.float32(0.0))),
                                         w=tanks_in.w.at[t_idx_in].set(jnp.where(is_tank, w, jnp.float32(0.0))), 
                                         h=tanks_in.h.at[t_idx_in].set(jnp.where(is_tank, h, jnp.float32(0.0))), 
                                         sprite_idx=tanks_in.sprite_idx.at[t_idx_in].set(jnp.where(is_tank, obj_type, jnp.int32(-1))), 
@@ -2663,14 +2671,13 @@ class JaxGravitar(JaxEnvironment):
         
         init_enemies = create_empty_enemies()
         init_tanks = FuelTanks(
-                    x=jnp.full((MAX_TANKS,), -1.0), 
-                    y=jnp.full((MAX_TANKS,), -1.0), 
-                    w=jnp.zeros((MAX_TANKS,)), 
-                    h=jnp.zeros((MAX_TANKS,)), 
-                    sprite_idx=jnp.full((MAX_TANKS,), -1), 
-                    active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)
-                    )
-        
+                            x=jnp.zeros((MAX_TANKS,)),
+                            y=jnp.zeros((MAX_TANKS,)),
+                            w=jnp.zeros((MAX_TANKS,)),
+                            h=jnp.zeros((MAX_TANKS,)),
+                            sprite_idx=jnp.full((MAX_TANKS,), -1),
+                            active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)
+                        )
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(
             jnp.int32(0), 
             self.jax_layout["types"].shape[1], 

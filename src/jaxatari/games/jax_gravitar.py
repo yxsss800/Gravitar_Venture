@@ -27,7 +27,7 @@ WORLD_SCALE = 3.0
 # ========== Constants ==========
 SPRITE_DIR = os.path.join(os.path.dirname(__file__), "sprites", "gravitar")
 SCALE = 1
-MAX_BULLETS = 64
+#MAX_BULLETS = 64
 MAX_ENEMIES = 16
 # 18 discrete spaceship action constants
 NOOP = 0
@@ -86,13 +86,15 @@ SHIP_ANCHOR_Y = None
 DEBUG_DRAW_SHIP_ORIGIN = True
 PLAYER_FIRE_COOLDOWN_FRAMES = 30
 
-OBJ_SHIP_DIM    = 5    
-OBJ_BULLET_DIM  = 5    
-OBJ_ENEMY_DIM   = 5    
-OBJ_TANK_DIM    = 5    
+# ---- Object feature dims ----
+OBJ_SHIP_DIM    = 5
+OBJ_BULLET_DIM  = 5
+OBJ_ENEMY_DIM   = 5
+OBJ_TANK_DIM    = 5
 OBJ_UFO_DIM     = 5
 OBJ_SAUCER_DIM  = 5
 
+# ---- SINGLE SOURCE OF TRUTH: capacities ----
 MAX_PLAYER_BULLETS = 2          
 MAX_ENEMIES        = 16         
 MAX_TANKS          = 8          
@@ -1244,6 +1246,9 @@ def enemy_fire(enemies: Enemies,
 # ========== Collision Detection ==========
 @jax.jit
 def check_collision(bullets: Bullets, enemies: Enemies):
+    B = bullets.x.shape[0]
+    E = enemies.x.shape[0]
+
     def bullet_hits_enemy(i, carry):            # `carry` is the cumulative result, a boolean array of shape (MAX_BULLETS,)
         x = bullets.x[i]                        # x, y are the current bullet coordinates
         y = bullets.y[i]
@@ -1256,12 +1261,12 @@ def check_collision(bullets: Bullets, enemies: Enemies):
 
             return hit | (within_x & within_y)
         
-        hit_any = jax.lax.fori_loop(0, MAX_ENEMIES, check_each_enemy, False)
+        hit_any = jax.lax.fori_loop(0, E, check_each_enemy, False)
 
         return carry.at[i].set(hit_any & alive)
     
-    hits = jnp.zeros((MAX_BULLETS,), dtype=bool)
-    hits = jax.lax.fori_loop(0, MAX_BULLETS, bullet_hits_enemy, hits)
+    hits = jnp.zeros((B,), dtype=bool)
+    hits = jax.lax.fori_loop(0, B, bullet_hits_enemy, hits)
 
     return hits
 
@@ -2319,6 +2324,7 @@ def _to_mat_tanks(t: FuelTanks, cap: int) -> jnp.ndarray:
     return jnp.concatenate([mat, pad], axis=0)
 
 class JaxGravitar(JaxEnvironment):
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 60}
     def __init__(self, obs_type="object_centric"):
         super().__init__()
         self.obs_type = obs_type
@@ -2459,7 +2465,7 @@ class JaxGravitar(JaxEnvironment):
     def object_centric_observation_space(self) -> spaces.Dict:
         """Returns the observation space for object-centric observations."""
         X_MIN, X_MAX = 0.0, float(WINDOW_WIDTH)
-        Y_MIN, Y_MAX = float(HUD_HEIGHT), float(WINDOW_HEIGHT)
+        Y_MIN, Y_MAX = 0.0, float(WINDOW_HEIGHT)
 
         V_MIN, V_MAX = -5.0, 5.0
         ANG_MIN, ANG_MAX = -math.pi, math.pi
@@ -2593,7 +2599,7 @@ class JaxGravitar(JaxEnvironment):
         env_state = EnvState(
             mode=jnp.int32(0), state=ship_state, bullets=create_empty_bullets_64(),
             cooldown=jnp.array(0, dtype=jnp.int32), enemies=create_empty_enemies(),
-            fuel_tanks=FuelTanks(x=jnp.full((MAX_ENEMIES,), -1.0), y=jnp.full((MAX_ENEMIES,), -1.0), w=jnp.zeros((MAX_ENEMIES,)), h=jnp.zeros((MAX_ENEMIES,)), sprite_idx=jnp.full((MAX_ENEMIES,), -1), active=jnp.zeros((MAX_ENEMIES,), dtype=jnp.bool_)),
+            fuel_tanks=FuelTanks(x=jnp.full((MAX_TANKS,), -1.0), y=jnp.full((MAX_TANKS,), -1.0), w=jnp.zeros((MAX_TANKS,)), h=jnp.zeros((MAX_TANKS,)), sprite_idx=jnp.full((MAX_TANKS,), -1), active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)),
             enemy_bullets=create_empty_bullets_16(), fire_cooldown=jnp.zeros((MAX_ENEMIES,), dtype=jnp.int32),
             key=key, key_alt=key, score=jnp.array(score if score is not None else 0.0, dtype=jnp.float32),
             done=jnp.array(False, dtype=jnp.bool_), lives=jnp.array(lives if lives is not None else MAX_LIVES, dtype=jnp.int32),
@@ -2657,12 +2663,12 @@ class JaxGravitar(JaxEnvironment):
         
         init_enemies = create_empty_enemies()
         init_tanks = FuelTanks(
-                    x=jnp.full((MAX_ENEMIES,), -1.0), 
-                    y=jnp.full((MAX_ENEMIES,), -1.0), 
-                    w=jnp.zeros((MAX_ENEMIES,)), 
-                    h=jnp.zeros((MAX_ENEMIES,)), 
-                    sprite_idx=jnp.full((MAX_ENEMIES,), -1), 
-                    active=jnp.zeros((MAX_ENEMIES,), dtype=jnp.bool_)
+                    x=jnp.full((MAX_TANKS,), -1.0), 
+                    y=jnp.full((MAX_TANKS,), -1.0), 
+                    w=jnp.zeros((MAX_TANKS,)), 
+                    h=jnp.zeros((MAX_TANKS,)), 
+                    sprite_idx=jnp.full((MAX_TANKS,), -1), 
+                    active=jnp.zeros((MAX_TANKS,), dtype=jnp.bool_)
                     )
         
         enemies, fuel_tanks, _, _ = jax.lax.fori_loop(
@@ -2888,7 +2894,7 @@ class GravitarRenderer(JAXGameRenderer):
                                     current_frame)
             
             # Iterate through all possible tank slots
-            return jax.lax.fori_loop(jnp.int32(0), MAX_ENEMIES, draw_tank_func, f)
+            return jax.lax.fori_loop(jnp.int32(0), MAX_TANKS, draw_tank_func, f)
 
         def draw_ufo(f):
             ufo = state.ufo
